@@ -37,6 +37,7 @@ const { promisify } = require('util');
 const { Pool } = require('pg');
 const { SecretsManagerClient, GetSecretValueCommand, PutSecretValueCommand } = require('@aws-sdk/client-secrets-manager');
 const { CloudWatchClient, PutMetricDataCommand } = require('@aws-sdk/client-cloudwatch');
+const http = require('http');
 const fs = require('fs');
 const path = require('path');
 const { randomUUID } = require('crypto');
@@ -1442,7 +1443,7 @@ After=network.target
 [Service]
 Type=simple
 WorkingDirectory=/home/ubuntu/autopilot-api
-ExecStart=/home/ubuntu/.nvm/versions/node/v22.*/bin/node server.js
+ExecStart=/home/ubuntu/.nvm/versions/node/v22.22.0/bin/node server.js
 Restart=always
 RestartSec=5
 Environment=NODE_ENV=production

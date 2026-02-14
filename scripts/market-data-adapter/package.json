@@ -1,0 +1,15 @@
+{
+  "name": "solana-market-data-adapter",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Ingest live SOL-USDC ticks from Jupiter and persist into market_ticks",
+  "main": "ingest-jupiter-ticks.js",
+  "scripts": {
+    "start": "node ingest-jupiter-ticks.js",
+    "once": "node ingest-jupiter-ticks.js --once"
+  },
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.700.0",
+    "pg": "^8.13.0"
+  }
+}

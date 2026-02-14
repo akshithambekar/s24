@@ -109,7 +109,7 @@ Resources:
       DBInstanceIdentifier: !Sub "${AWS::StackName}-db"
       DBInstanceClass: !Ref DBInstanceClass
       Engine: postgres
-      EngineVersion: "16.4"
+      EngineVersion: "16.12"
       DBName: !Ref DBName
       MasterUsername: !Ref DBMasterUsername
       MasterUserPassword: !Sub "{{resolve:secretsmanager:${DBMasterSecret}:SecretString:password}}"
@@ -177,6 +177,7 @@ Resources:
             Effect: Allow
             Action:
               - 'secretsmanager:GetSecretValue'
+              - 'secretsmanager:PutSecretValue'
               - 'secretsmanager:DescribeSecret'
             Resource:
               - !Ref DBMasterSecret

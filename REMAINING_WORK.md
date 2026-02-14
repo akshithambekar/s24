@@ -32,7 +32,7 @@
 | Risk events endpoint (`GET /v1/risk/events`)            | Done — built in `deploy-api.sh`                                                        |
 | Dynamic risk policy config (`GET/PUT /v1/risk/policy`)  | Not started                                                                            |
 | Dynamic strategy config (`GET/PUT /v1/strategy/config`) | Not started                                                                            |
-| Strategy engine (autonomous signal generation)          | Not started — trade cycle accepts `proposal` from caller                               |
+| Strategy engine (autonomous signal generation)          | **Out of scope** — only OpenClaw proposes trades; no standalone engine needed          |
 | Anomaly detection (>5% price move auto-kill)            | Not started                                                                            |
 | Background scheduler (auto-trigger cycles)              | Not started                                                                            |
 | Web UI (deploy, configure, monitor)                     | Not started                                                                            |
@@ -156,15 +156,9 @@ Full pipeline implemented inline in `deploy-api.sh`:
 
 Owner: Strategy engine, risk engine, kill switch logic.
 
-### P3.1 Build standalone strategy engine module — NOT STARTED
+### P3.1 Build standalone strategy engine module — CANCELLED (out of scope)
 
-The trade cycle currently accepts a `proposal` from the caller (OpenClaw agent or UI) rather than generating signals autonomously. A standalone strategy engine would:
-
-- Read latest N market ticks from `market_ticks` table
-- Implement momentum strategy (>2% price move in 5 min → signal)
-- Confidence = magnitude / threshold (capped at 1.0), reduced by 0.2 if spread > 50bps
-- Output: `{ symbol, side, qty, confidence, reason }`
-- Could run as part of the background scheduler (P2.4) or be called by the trade cycle
+**Product decision: only OpenClaw proposes trades.** The trade cycle accepts a `proposal` from the caller (OpenClaw); no autonomous signal generation is required. A standalone strategy engine was previously considered for scheduler-driven trading; not needed for agent-only workflow.
 
 ### P3.2 Build standalone risk engine module — DONE (embedded in Trading API)
 
@@ -317,7 +311,7 @@ P2.1 (Trading API)          ──→  P4.4-P4.7 (UI calls /v1/* endpoints)
 P3.2 (risk engine)          ──→  P2.2 (trade cycle calls risk checks)     ✅ DONE (inline)
 P2.2 (trade cycle)          ──→  P1.3 (OpenClaw hooks call the API)       ✅ DONE
 P2.5 (deploy API)           ──→  P4.8 (UI needs live backend)
-P3.1 (strategy engine)      ──→  P2.4 (scheduler needs autonomous signals)
+~~P3.1 (strategy engine)~~   — out of scope (only OpenClaw proposes trades)
 ```
 
 ### Suggested Parallel Work Order
@@ -339,8 +333,7 @@ P3.1 (strategy engine)      ──→  P2.4 (scheduler needs autonomous signals)
 
 **Next (needs P2.5 deployed):**
 
-- P3.1 — Build strategy engine (for autonomous trading)
-- P2.4 — Background scheduler (needs P3.1 for signal generation)
+- P2.4 — Background scheduler (optional: trigger OpenClaw or no-op cycles on interval)
 - P3.5 (remaining) — `GET/PUT /v1/risk/policy` + `GET/PUT /v1/strategy/config` (Person 3 designs, Person 2 integrates)
 - P4.2-P4.3 — Auth + deploy pages
 - P4.4-P4.7 — Dashboard pages (API is ready)

@@ -234,8 +234,8 @@ app.post('/api/deploy/kill-switch', async (req, res) => {
     try {
       const pool = await getDbPool();
       await pool.query(
-        'INSERT INTO kill_switch_events (action, triggered_by, reason) VALUES ($1, $2, $3)',
-        [active ? 'ACTIVATE' : 'DEACTIVATE', 'api', reason || null]
+        'INSERT INTO kill_switch_events (enabled, actor, reason) VALUES ($1, $2, $3)',
+        [active, 'api', reason || null]
       );
     } catch (dbErr) {
       console.error('Failed to log kill switch event:', dbErr.message);
@@ -279,7 +279,7 @@ app.get('/api/deploy/kill-switch', async (req, res) => {
     try {
       const pool = await getDbPool();
       const result = await pool.query(
-        'SELECT action, triggered_by, reason, created_at FROM kill_switch_events ORDER BY created_at DESC LIMIT 5'
+        'SELECT enabled, actor, reason, created_at FROM kill_switch_events ORDER BY created_at DESC LIMIT 5'
       );
       recentEvents = result.rows;
     } catch {}
@@ -301,8 +301,8 @@ app.get('/api/portfolio/summary', async (req, res) => {
   try {
     const pool = await getDbPool();
     const [positionsRes, snapshotRes, recentOrdersRes] = await Promise.all([
-      pool.query("SELECT * FROM positions WHERE side != 'FLAT' ORDER BY pair"),
-      pool.query('SELECT * FROM portfolio_snapshots ORDER BY snapshot_at DESC LIMIT 1'),
+      pool.query("SELECT * FROM positions WHERE qty <> 0 ORDER BY symbol"),
+      pool.query('SELECT * FROM portfolio_snapshots ORDER BY captured_at DESC LIMIT 1'),
       pool.query('SELECT * FROM orders ORDER BY created_at DESC LIMIT 10')
     ]);
 

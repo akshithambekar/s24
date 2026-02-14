@@ -67,6 +67,10 @@ const RISK_POLICY = {
   maxTradesPerDay: 50,
   minConfidence: 0.7,
   minPriceMovePct5m: 2,
+  anomalyWarnMovePct60s: 5,
+  anomalyAutoKillMovePct60s: 10,
+  anomalyWindowSeconds: 60,
+  anomalyAutoKillEnabled: true,
   simulatedSlippagePct: 0.003,
   simulatedFeePct: 0.001
 };
@@ -78,6 +82,15 @@ const schedulerState = {
   lastResult: null,
   cycleCount: 0,
   timer: null
+};
+
+const STRATEGY_CONFIG = {
+  enabled: true,
+  symbol: DEFAULT_SYMBOL,
+  defaultOrderSizeSol: 0.25,
+  minConfidence: RISK_POLICY.minConfidence,
+  minPriceMovePct5m: RISK_POLICY.minPriceMovePct5m,
+  cooldownSeconds: RISK_POLICY.cooldownSeconds
 };
 
 const smClient = new SecretsManagerClient({ region: REGION });
@@ -157,6 +170,145 @@ function parseBoolean(value, fallback = null) {
     if (['false', '0', 'no', 'n', 'off'].includes(normalized)) return false;
   }
   return fallback;
+}
+
+function readFromAnyKey(input, keys) {
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(input, key)) {
+      return input[key];
+    }
+  }
+  return undefined;
+}
+
+function sanitizeRiskPolicyPatch(input) {
+  if (!input || typeof input !== 'object') return {};
+  const out = {};
+  const numericFields = [
+    ['startingBalanceSol', ['startingBalanceSol', 'starting_balance_sol'], 'positive'],
+    ['maxSingleOrderSol', ['maxSingleOrderSol', 'max_single_order_sol'], 'positive'],
+    ['maxOpenExposureSol', ['maxOpenExposureSol', 'max_open_exposure_sol'], 'positive'],
+    ['maxOpenPositions', ['maxOpenPositions', 'max_open_positions'], 'positive_int'],
+    ['maxDrawdownSol', ['maxDrawdownSol', 'max_drawdown_sol'], 'positive'],
+    ['maxLossPerTradeSol', ['maxLossPerTradeSol', 'max_loss_per_trade_sol'], 'positive'],
+    ['maxDailyLossSol', ['maxDailyLossSol', 'max_daily_loss_sol'], 'positive'],
+    ['cooldownSeconds', ['cooldownSeconds', 'cooldown_seconds'], 'positive_int'],
+    ['maxTradesPerHour', ['maxTradesPerHour', 'max_trades_per_hour'], 'positive_int'],
+    ['maxTradesPerDay', ['maxTradesPerDay', 'max_trades_per_day'], 'positive_int'],
+    ['minConfidence', ['minConfidence', 'min_confidence'], 'unit_interval'],
+    ['minPriceMovePct5m', ['minPriceMovePct5m', 'min_price_move_pct_5m', 'min_price_move_pct5m'], 'non_negative'],
+    ['anomalyWarnMovePct60s', ['anomalyWarnMovePct60s', 'anomaly_warn_move_pct_60s'], 'non_negative'],
+    ['anomalyAutoKillMovePct60s', ['anomalyAutoKillMovePct60s', 'anomaly_auto_kill_move_pct_60s'], 'non_negative'],
+    ['anomalyWindowSeconds', ['anomalyWindowSeconds', 'anomaly_window_seconds'], 'positive_int'],
+    ['simulatedSlippagePct', ['simulatedSlippagePct', 'simulated_slippage_pct'], 'non_negative'],
+    ['simulatedFeePct', ['simulatedFeePct', 'simulated_fee_pct'], 'non_negative']
+  ];
+
+  for (const [target, keys, kind] of numericFields) {
+    const raw = readFromAnyKey(input, keys);
+    if (raw === undefined) continue;
+    let parsed = null;
+    if (kind === 'positive') parsed = parsePositiveNumber(raw, null);
+    if (kind === 'non_negative') parsed = parseNonNegativeNumber(raw, null);
+    if (kind === 'positive_int') {
+      const n = parsePositiveNumber(raw, null);
+      parsed = n === null ? null : Math.max(1, Math.floor(n));
+    }
+    if (kind === 'unit_interval') {
+      const n = parseNonNegativeNumber(raw, null);
+      parsed = (n !== null && n <= 1) ? n : null;
+    }
+    if (parsed !== null) out[target] = parsed;
+  }
+
+  const anomalyAutoKillEnabledRaw = readFromAnyKey(input, ['anomalyAutoKillEnabled', 'anomaly_auto_kill_enabled']);
+  const anomalyAutoKillEnabled = parseBoolean(anomalyAutoKillEnabledRaw, null);
+  if (anomalyAutoKillEnabled !== null) out.anomalyAutoKillEnabled = anomalyAutoKillEnabled;
+
+  return out;
+}
+
+function sanitizeStrategyConfigPatch(input) {
+  if (!input || typeof input !== 'object') return {};
+  const out = {};
+
+  const boolFields = [
+    ['enabled', ['enabled']],
+    ['anomalyDetectionEnabled', ['anomalyDetectionEnabled', 'anomaly_detection_enabled']]
+  ];
+  for (const [target, keys] of boolFields) {
+    const raw = readFromAnyKey(input, keys);
+    const value = parseBoolean(raw, null);
+    if (value !== null) out[target] = value;
+  }
+
+  const symbol = readFromAnyKey(input, ['symbol', 'default_symbol']);
+  if (typeof symbol === 'string' && symbol.trim().length > 0) {
+    out.symbol = symbol.trim().toUpperCase();
+  }
+
+  const numericFields = [
+    ['defaultOrderSizeSol', ['defaultOrderSizeSol', 'default_order_size_sol'], 'positive'],
+    ['minConfidence', ['minConfidence', 'min_confidence'], 'unit_interval'],
+    ['minPriceMovePct5m', ['minPriceMovePct5m', 'min_price_move_pct_5m'], 'non_negative'],
+    ['cooldownSeconds', ['cooldownSeconds', 'cooldown_seconds'], 'positive_int']
+  ];
+
+  for (const [target, keys, kind] of numericFields) {
+    const raw = readFromAnyKey(input, keys);
+    if (raw === undefined) continue;
+    let parsed = null;
+    if (kind === 'positive') parsed = parsePositiveNumber(raw, null);
+    if (kind === 'non_negative') parsed = parseNonNegativeNumber(raw, null);
+    if (kind === 'positive_int') {
+      const n = parsePositiveNumber(raw, null);
+      parsed = n === null ? null : Math.max(1, Math.floor(n));
+    }
+    if (kind === 'unit_interval') {
+      const n = parseNonNegativeNumber(raw, null);
+      parsed = (n !== null && n <= 1) ? n : null;
+    }
+    if (parsed !== null) out[target] = parsed;
+  }
+
+  return out;
+}
+
+function buildEffectiveRiskPolicy(tradingConfig) {
+  const patch = sanitizeRiskPolicyPatch(tradingConfig?.risk_policy || {});
+  const merged = { ...RISK_POLICY, ...patch };
+  if (merged.anomalyAutoKillMovePct60s < merged.anomalyWarnMovePct60s) {
+    merged.anomalyAutoKillMovePct60s = merged.anomalyWarnMovePct60s;
+  }
+  return merged;
+}
+
+function buildEffectiveStrategyConfig(tradingConfig, riskPolicy) {
+  const baseline = {
+    ...STRATEGY_CONFIG,
+    minConfidence: riskPolicy.minConfidence,
+    minPriceMovePct5m: riskPolicy.minPriceMovePct5m,
+    cooldownSeconds: riskPolicy.cooldownSeconds
+  };
+  const patch = sanitizeStrategyConfigPatch(tradingConfig?.strategy_config || {});
+  return { ...baseline, ...patch };
+}
+
+function buildOverridesFromEffective(effectiveConfig, baselineConfig) {
+  const out = {};
+  for (const [key, value] of Object.entries(effectiveConfig || {})) {
+    const baselineValue = baselineConfig?.[key];
+    if (typeof value === 'number' && typeof baselineValue === 'number') {
+      if (Math.abs(value - baselineValue) > 1e-12) {
+        out[key] = value;
+      }
+      continue;
+    }
+    if (value !== baselineValue) {
+      out[key] = value;
+    }
+  }
+  return out;
 }
 
 function parseLimit(rawLimit, defaultValue = 50, maxValue = 200) {
@@ -301,25 +453,25 @@ async function getTradeFrequencyState(pool) {
   };
 }
 
-function getPortfolioStateFromSnapshot(snapshot) {
+function getPortfolioStateFromSnapshot(snapshot, riskPolicy = RISK_POLICY) {
   if (!snapshot) {
     return {
-      navSol: RISK_POLICY.startingBalanceSol,
-      cashSol: RISK_POLICY.startingBalanceSol,
+      navSol: riskPolicy.startingBalanceSol,
+      cashSol: riskPolicy.startingBalanceSol,
       realizedPnlSol: 0,
       unrealizedPnlSol: 0
     };
   }
   return {
-    navSol: Number(snapshot.nav || RISK_POLICY.startingBalanceSol),
+    navSol: Number(snapshot.nav || riskPolicy.startingBalanceSol),
     cashSol: Number(snapshot.cash || 0),
     realizedPnlSol: Number(snapshot.realized_pnl || 0),
     unrealizedPnlSol: Number(snapshot.unrealized_pnl || 0)
   };
 }
 
-function estimateTradeCostSol(qtySol) {
-  return qtySol * (RISK_POLICY.simulatedSlippagePct + RISK_POLICY.simulatedFeePct);
+function estimateTradeCostSol(qtySol, riskPolicy = RISK_POLICY) {
+  return qtySol * (riskPolicy.simulatedSlippagePct + riskPolicy.simulatedFeePct);
 }
 
 function normalizeSide(side) {
@@ -347,6 +499,165 @@ async function maybeActivateKillSwitch(pool, reason, actor = 'system') {
   return {
     activated: true,
     alreadyActive: false
+  };
+}
+
+async function detectRecentPriceAnomaly(pool, symbol, riskPolicy) {
+  const windowSeconds = Math.max(1, Math.floor(riskPolicy.anomalyWindowSeconds));
+  const result = await pool.query(
+    `SELECT mid_price, event_at
+     FROM market_ticks
+     WHERE symbol = $1
+       AND event_at >= NOW() - make_interval(secs => $2::int)
+     ORDER BY event_at ASC`,
+    [symbol, windowSeconds]
+  );
+
+  if (result.rows.length < 2) {
+    return {
+      detected: false,
+      severity: 'none',
+      price_move_pct: 0,
+      baseline_mid_price: null,
+      latest_mid_price: null,
+      baseline_at: null,
+      latest_at: null,
+      window_seconds: windowSeconds,
+      samples: result.rows.length
+    };
+  }
+
+  const baseline = result.rows[0];
+  const latest = result.rows[result.rows.length - 1];
+  const baselinePrice = Number(baseline.mid_price || 0);
+  const latestPrice = Number(latest.mid_price || 0);
+  if (!Number.isFinite(baselinePrice) || baselinePrice <= 0 || !Number.isFinite(latestPrice) || latestPrice <= 0) {
+    return {
+      detected: false,
+      severity: 'none',
+      price_move_pct: 0,
+      baseline_mid_price: baselinePrice,
+      latest_mid_price: latestPrice,
+      baseline_at: baseline.event_at,
+      latest_at: latest.event_at,
+      window_seconds: windowSeconds,
+      samples: result.rows.length
+    };
+  }
+
+  const movePct = Math.abs(((latestPrice - baselinePrice) / baselinePrice) * 100);
+  const severity =
+    movePct >= riskPolicy.anomalyAutoKillMovePct60s ? 'extreme' :
+    movePct >= riskPolicy.anomalyWarnMovePct60s ? 'warning' :
+    'none';
+
+  return {
+    detected: severity !== 'none',
+    severity,
+    price_move_pct: movePct,
+    baseline_mid_price: baselinePrice,
+    latest_mid_price: latestPrice,
+    baseline_at: baseline.event_at,
+    latest_at: latest.event_at,
+    window_seconds: windowSeconds,
+    samples: result.rows.length
+  };
+}
+
+function buildAnomalyDetails(symbol, anomaly) {
+  return {
+    symbol,
+    severity: anomaly.severity,
+    price_move_pct: anomaly.price_move_pct,
+    window_seconds: anomaly.window_seconds,
+    baseline_mid_price: anomaly.baseline_mid_price,
+    latest_mid_price: anomaly.latest_mid_price,
+    baseline_at: anomaly.baseline_at ? new Date(anomaly.baseline_at).toISOString() : null,
+    latest_at: anomaly.latest_at ? new Date(anomaly.latest_at).toISOString() : null,
+    samples: anomaly.samples
+  };
+}
+
+async function insertAnomalyWarningForOrder(pool, orderId, symbol, anomaly) {
+  if (!orderId || !anomaly?.detected) {
+    return false;
+  }
+  const rule = anomaly.severity === 'extreme'
+    ? 'ANOMALOUS_PRICE_MOVE_EXTREME'
+    : 'ANOMALOUS_PRICE_MOVE_WARNING';
+  await pool.query(
+    `INSERT INTO risk_events (order_id, action, rule, details)
+     VALUES ($1, $2, $3, $4::jsonb)`,
+    [orderId, 'warned', rule, JSON.stringify(buildAnomalyDetails(symbol, anomaly))]
+  );
+  return true;
+}
+
+async function getLatestOrderIdForSymbol(pool, symbol) {
+  const result = await pool.query(
+    `SELECT order_id
+     FROM orders
+     WHERE symbol = $1
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [symbol]
+  );
+  return result.rows[0]?.order_id || null;
+}
+
+async function insertAnomalyWarningUsingLatestOrder(pool, symbol, anomaly) {
+  const orderId = await getLatestOrderIdForSymbol(pool, symbol);
+  if (!orderId) {
+    return {
+      logged: false,
+      order_id: null,
+      reason: 'no_order_context'
+    };
+  }
+  await insertAnomalyWarningForOrder(pool, orderId, symbol, anomaly);
+  return {
+    logged: true,
+    order_id: orderId,
+    reason: null
+  };
+}
+
+async function evaluateAnomalyForSymbol(pool, symbol, riskPolicy, options = {}) {
+  const autoKill = parseBoolean(options.autoKill, true);
+  const logWarning = parseBoolean(options.logWarning, true);
+  const actor = typeof options.actor === 'string' && options.actor.trim().length > 0
+    ? options.actor.trim()
+    : 'risk-engine';
+
+  const anomaly = await detectRecentPriceAnomaly(pool, symbol, riskPolicy);
+
+  let warningLog = {
+    logged: false,
+    order_id: null,
+    reason: null
+  };
+  if (logWarning && anomaly.detected) {
+    warningLog = await insertAnomalyWarningUsingLatestOrder(pool, symbol, anomaly);
+  }
+
+  let killSwitch = {
+    attempted: false,
+    activated: false,
+    alreadyActive: false
+  };
+  if (autoKill && riskPolicy.anomalyAutoKillEnabled && anomaly.severity === 'extreme') {
+    const killReason = `Auto activation: ${symbol} moved ${anomaly.price_move_pct.toFixed(4)}% within ${anomaly.window_seconds}s`;
+    const activationResult = await maybeActivateKillSwitch(pool, killReason, actor);
+    killSwitch = {
+      attempted: true,
+      ...activationResult
+    };
+  }
+
+  return {
+    anomaly,
+    warning_log: warningLog,
+    kill_switch: killSwitch
   };
 }
 
@@ -482,15 +793,19 @@ app.get('/v1/bot/status', async (req, res) => {
       getDbPool(),
       getTradingConfig()
     ]);
+    const riskPolicy = buildEffectiveRiskPolicy(tradingConfig);
+    const strategyConfig = buildEffectiveStrategyConfig(tradingConfig, riskPolicy);
+    const anomalyEnabled = strategyConfig.anomalyDetectionEnabled !== false;
 
-    const [latestTick, lastCycleAt, latestSnapshot] = await Promise.all([
+    const [latestTick, lastCycleAt, latestSnapshot, anomaly] = await Promise.all([
       getLatestTick(pool, symbol),
       getLastCycleAt(pool, symbol),
-      getLatestSnapshot(pool)
+      getLatestSnapshot(pool),
+      anomalyEnabled ? detectRecentPriceAnomaly(pool, symbol, riskPolicy) : Promise.resolve(null)
     ]);
 
-    const portfolio = getPortfolioStateFromSnapshot(latestSnapshot);
-    const drawdown = Math.max(0, RISK_POLICY.startingBalanceSol - portfolio.navSol);
+    const portfolio = getPortfolioStateFromSnapshot(latestSnapshot, riskPolicy);
+    const drawdown = Math.max(0, riskPolicy.startingBalanceSol - portfolio.navSol);
     const killSwitch = Boolean(tradingConfig.kill_switch_active);
     return res.json({
       mode: tradingConfig.paper_mode ? 'paper_mode' : 'unknown',
@@ -500,7 +815,11 @@ app.get('/v1/bot/status', async (req, res) => {
       last_tick_at: latestTick?.event_at ? new Date(latestTick.event_at).toISOString() : null,
       market_data_stale: isTickStale(latestTick?.event_at),
       portfolio_nav_sol: portfolio.navSol,
-      drawdown_sol: drawdown
+      drawdown_sol: drawdown,
+      anomaly_detection: {
+        enabled: anomalyEnabled,
+        state: anomaly
+      }
     });
   } catch (err) {
     return sendApiError(res, 500, 'INTERNAL_ERROR', 'Failed to read bot status', { reason: err.message });
@@ -559,6 +878,9 @@ app.post('/v1/trade/cycle', async (req, res) => {
     }
 
     const tradingConfig = await getTradingConfig();
+    const riskPolicy = buildEffectiveRiskPolicy(tradingConfig);
+    const strategyConfig = buildEffectiveStrategyConfig(tradingConfig, riskPolicy);
+    const anomalyDetectionEnabled = strategyConfig.anomalyDetectionEnabled !== false;
     if (tradingConfig.kill_switch_active) {
       return rejectCycle(423, 'KILL_SWITCH_ACTIVE', 'Kill switch is active. New cycles are blocked.', {});
     }
@@ -585,11 +907,29 @@ app.post('/v1/trade/cycle', async (req, res) => {
       });
     }
 
+    let anomalyCheck = null;
+    if (anomalyDetectionEnabled) {
+      anomalyCheck = await evaluateAnomalyForSymbol(pool, symbol, riskPolicy, {
+        autoKill: true,
+        logWarning: false,
+        actor: 'risk-engine'
+      });
+      if (anomalyCheck.kill_switch.attempted && (anomalyCheck.kill_switch.activated || anomalyCheck.kill_switch.alreadyActive)) {
+        return rejectCycle(423, 'KILL_SWITCH_ACTIVE', 'Kill switch auto-activated by anomaly detection', {
+          symbol,
+          anomaly: anomalyCheck.anomaly,
+          auto_kill_enabled: riskPolicy.anomalyAutoKillEnabled,
+          auto_kill_threshold_pct_60s: riskPolicy.anomalyAutoKillMovePct60s
+        });
+      }
+    }
+
     const cycleId = randomUUID();
     const strategyPayload = {
       trigger_source: triggerSource,
       proposal: proposal || {},
-      forced_no_trade: forceNoTrade
+      forced_no_trade: forceNoTrade,
+      anomaly_context: anomalyCheck?.anomaly || null
     };
 
     if (!proposal || forceNoTrade) {
@@ -598,7 +938,8 @@ app.post('/v1/trade/cycle', async (req, res) => {
         accepted: true,
         queued_at: nowIso(),
         symbol,
-        trigger_source: triggerSource
+        trigger_source: triggerSource,
+        anomaly: anomalyCheck?.anomaly || null
       };
       if (idempotencyKey) {
         await storeIdempotentResponse(pool, idempotencyKey, responsePayload);
@@ -623,23 +964,23 @@ app.post('/v1/trade/cycle', async (req, res) => {
       getTradeFrequencyState(pool)
     ]);
 
-    const portfolio = getPortfolioStateFromSnapshot(snapshot);
+    const portfolio = getPortfolioStateFromSnapshot(snapshot, riskPolicy);
     const dayStartNavSol = dayStartSnapshot ? Number(dayStartSnapshot.nav || portfolio.navSol) : portfolio.navSol;
     const dailyLossSol = Math.max(0, dayStartNavSol - portfolio.navSol);
-    const drawdownSol = Math.max(0, RISK_POLICY.startingBalanceSol - portfolio.navSol);
-    const tradeCostSol = estimateTradeCostSol(qtySol);
+    const drawdownSol = Math.max(0, riskPolicy.startingBalanceSol - portfolio.navSol);
+    const tradeCostSol = estimateTradeCostSol(qtySol, riskPolicy);
     const projectedTradeLossSol = expectedLossSol ?? tradeCostSol;
 
-    if (drawdownSol >= RISK_POLICY.maxDrawdownSol || portfolio.navSol <= (RISK_POLICY.startingBalanceSol - RISK_POLICY.maxDrawdownSol)) {
+    if (drawdownSol >= riskPolicy.maxDrawdownSol || portfolio.navSol <= (riskPolicy.startingBalanceSol - riskPolicy.maxDrawdownSol)) {
       await maybeActivateKillSwitch(
         pool,
-        `Auto activation: drawdown ${drawdownSol.toFixed(6)} SOL reached threshold ${RISK_POLICY.maxDrawdownSol} SOL`,
+        `Auto activation: drawdown ${drawdownSol.toFixed(6)} SOL reached threshold ${riskPolicy.maxDrawdownSol} SOL`,
         'risk-engine'
       );
       return rejectCycle(423, 'KILL_SWITCH_ACTIVE', 'Kill switch auto-activated by drawdown rule', {
         nav_sol: portfolio.navSol,
         drawdown_sol: drawdownSol,
-        max_drawdown_sol: RISK_POLICY.maxDrawdownSol
+        max_drawdown_sol: riskPolicy.maxDrawdownSol
       });
     }
 
@@ -664,74 +1005,74 @@ app.post('/v1/trade/cycle', async (req, res) => {
       : null;
 
     const blockedRule = (() => {
-      if (qtySol > RISK_POLICY.maxSingleOrderSol) {
+      if (qtySol > riskPolicy.maxSingleOrderSol) {
         return {
           rule: 'MAX_SINGLE_ORDER_SIZE',
           message: 'Order size exceeds max single order size',
-          details: { limit_sol: RISK_POLICY.maxSingleOrderSol, requested_sol: qtySol }
+          details: { limit_sol: riskPolicy.maxSingleOrderSol, requested_sol: qtySol }
         };
       }
-      if (projectedTotalExposureSol > RISK_POLICY.maxOpenExposureSol) {
+      if (projectedTotalExposureSol > riskPolicy.maxOpenExposureSol) {
         return {
           rule: 'MAX_TOTAL_OPEN_EXPOSURE',
           message: 'Projected exposure exceeds allowed open exposure',
-          details: { limit_sol: RISK_POLICY.maxOpenExposureSol, projected_sol: projectedTotalExposureSol }
+          details: { limit_sol: riskPolicy.maxOpenExposureSol, projected_sol: projectedTotalExposureSol }
         };
       }
-      if (projectedOpenPositions > RISK_POLICY.maxOpenPositions) {
+      if (projectedOpenPositions > riskPolicy.maxOpenPositions) {
         return {
           rule: 'MAX_OPEN_POSITIONS',
           message: 'Projected number of open positions exceeds allowed maximum',
-          details: { limit: RISK_POLICY.maxOpenPositions, projected: projectedOpenPositions }
+          details: { limit: riskPolicy.maxOpenPositions, projected: projectedOpenPositions }
         };
       }
-      if (projectedTradeLossSol > RISK_POLICY.maxLossPerTradeSol) {
+      if (projectedTradeLossSol > riskPolicy.maxLossPerTradeSol) {
         return {
           rule: 'MAX_LOSS_PER_TRADE',
           message: 'Estimated loss for this trade exceeds per-trade limit',
-          details: { limit_sol: RISK_POLICY.maxLossPerTradeSol, projected_loss_sol: projectedTradeLossSol }
+          details: { limit_sol: riskPolicy.maxLossPerTradeSol, projected_loss_sol: projectedTradeLossSol }
         };
       }
-      if ((dailyLossSol + projectedTradeLossSol) > RISK_POLICY.maxDailyLossSol) {
+      if ((dailyLossSol + projectedTradeLossSol) > riskPolicy.maxDailyLossSol) {
         return {
           rule: 'MAX_DAILY_LOSS',
           message: 'Daily loss limit would be breached by this trade',
-          details: { limit_sol: RISK_POLICY.maxDailyLossSol, current_daily_loss_sol: dailyLossSol, projected_daily_loss_sol: dailyLossSol + projectedTradeLossSol }
+          details: { limit_sol: riskPolicy.maxDailyLossSol, current_daily_loss_sol: dailyLossSol, projected_daily_loss_sol: dailyLossSol + projectedTradeLossSol }
         };
       }
-      if (secondsSinceLastTrade !== null && secondsSinceLastTrade < RISK_POLICY.cooldownSeconds) {
+      if (secondsSinceLastTrade !== null && secondsSinceLastTrade < riskPolicy.cooldownSeconds) {
         return {
           rule: 'COOLDOWN_SECONDS',
           message: 'Trade cooldown period is active',
-          details: { cooldown_seconds: RISK_POLICY.cooldownSeconds, seconds_since_last_trade: secondsSinceLastTrade }
+          details: { cooldown_seconds: riskPolicy.cooldownSeconds, seconds_since_last_trade: secondsSinceLastTrade }
         };
       }
-      if (frequencyState.tradesLastHour >= RISK_POLICY.maxTradesPerHour) {
+      if (frequencyState.tradesLastHour >= riskPolicy.maxTradesPerHour) {
         return {
           rule: 'MAX_TRADES_PER_HOUR',
           message: 'Hourly trade cap reached',
-          details: { limit: RISK_POLICY.maxTradesPerHour, current: frequencyState.tradesLastHour }
+          details: { limit: riskPolicy.maxTradesPerHour, current: frequencyState.tradesLastHour }
         };
       }
-      if (frequencyState.tradesToday >= RISK_POLICY.maxTradesPerDay) {
+      if (frequencyState.tradesToday >= riskPolicy.maxTradesPerDay) {
         return {
           rule: 'MAX_TRADES_PER_DAY',
           message: 'Daily trade cap reached',
-          details: { limit: RISK_POLICY.maxTradesPerDay, current: frequencyState.tradesToday }
+          details: { limit: riskPolicy.maxTradesPerDay, current: frequencyState.tradesToday }
         };
       }
-      if (confidence < RISK_POLICY.minConfidence) {
+      if (confidence < riskPolicy.minConfidence) {
         return {
           rule: 'MIN_CONFIDENCE',
           message: 'Signal confidence below threshold',
-          details: { min_confidence: RISK_POLICY.minConfidence, received: confidence }
+          details: { min_confidence: riskPolicy.minConfidence, received: confidence }
         };
       }
-      if (Math.abs(priceMovementPct5m) < RISK_POLICY.minPriceMovePct5m) {
+      if (Math.abs(priceMovementPct5m) < riskPolicy.minPriceMovePct5m) {
         return {
           rule: 'MIN_PRICE_MOVEMENT_5M',
           message: 'Signal price movement below threshold',
-          details: { min_pct: RISK_POLICY.minPriceMovePct5m, received_pct: priceMovementPct5m }
+          details: { min_pct: riskPolicy.minPriceMovePct5m, received_pct: priceMovementPct5m }
         };
       }
       return null;
@@ -757,12 +1098,16 @@ app.post('/v1/trade/cycle', async (req, res) => {
           qtySol,
           limitPrice: tickMid
         });
+        if (anomalyCheck?.anomaly?.detected) {
+          await insertAnomalyWarningForOrder(client, audit.orderId, symbol, anomalyCheck.anomaly);
+        }
         await client.query('COMMIT');
 
         return rejectCycle(409, 'RISK_BLOCKED', blockedRule.message, {
           ...blockedRule.details,
           cycle_id: cycleId,
-          order_id: audit.orderId
+          order_id: audit.orderId,
+          anomaly: anomalyCheck?.anomaly || null
         });
       } catch (txErr) {
         await client.query('ROLLBACK');
@@ -773,8 +1118,8 @@ app.post('/v1/trade/cycle', async (req, res) => {
     }
 
     const fillPrice = side === 'buy' ? Number(latestTick.ask_price) : Number(latestTick.bid_price);
-    const feeSol = qtySol * RISK_POLICY.simulatedFeePct;
-    const slippageBps = Math.round(RISK_POLICY.simulatedSlippagePct * 10000);
+    const feeSol = qtySol * riskPolicy.simulatedFeePct;
+    const slippageBps = Math.round(riskPolicy.simulatedSlippagePct * 10000);
 
     const client = await pool.connect();
     try {
@@ -797,6 +1142,9 @@ app.post('/v1/trade/cycle', async (req, res) => {
         qtySol,
         limitPrice: tickMid
       });
+      if (anomalyCheck?.anomaly?.detected) {
+        await insertAnomalyWarningForOrder(client, audit.orderId, symbol, anomalyCheck.anomaly);
+      }
 
       const fillInsert = await client.query(
         `INSERT INTO fills (order_id, symbol, side, qty, fill_price, fee, slippage_bps, filled_at)
@@ -868,7 +1216,8 @@ app.post('/v1/trade/cycle', async (req, res) => {
         trigger_source: triggerSource,
         order_id: audit.orderId,
         fill_id: fillInsert.rows[0].fill_id,
-        status: 'executed'
+        status: 'executed',
+        anomaly: anomalyCheck?.anomaly || null
       };
 
       if (idempotencyKey) {
@@ -1080,6 +1429,200 @@ app.get('/v1/risk/events', async (req, res) => {
     return res.json({ items, next_cursor: nextCursor });
   } catch (err) {
     return sendApiError(res, 500, 'INTERNAL_ERROR', 'Failed to fetch risk events', { reason: err.message });
+  }
+});
+
+app.get('/v1/risk/policy', async (req, res) => {
+  try {
+    const tradingConfig = await getTradingConfig();
+    const riskPolicy = buildEffectiveRiskPolicy(tradingConfig);
+    const overrides = sanitizeRiskPolicyPatch(tradingConfig?.risk_policy || {});
+    return res.json({
+      risk_policy: riskPolicy,
+      overrides,
+      defaults: RISK_POLICY
+    });
+  } catch (err) {
+    return sendApiError(res, 500, 'INTERNAL_ERROR', 'Failed to fetch risk policy', { reason: err.message });
+  }
+});
+
+app.put('/v1/risk/policy', async (req, res) => {
+  const payload = req.body?.risk_policy !== undefined ? req.body.risk_policy : req.body;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return sendApiError(res, 400, 'BAD_REQUEST', 'risk policy payload must be a JSON object', {});
+  }
+
+  const patch = sanitizeRiskPolicyPatch(payload);
+  if (Object.keys(patch).length === 0) {
+    return sendApiError(res, 400, 'BAD_REQUEST', 'No valid risk policy fields were provided', {});
+  }
+
+  try {
+    const tradingConfig = await getTradingConfig();
+    const currentOverrides = sanitizeRiskPolicyPatch(tradingConfig?.risk_policy || {});
+    const mergedOverrides = {
+      ...currentOverrides,
+      ...patch
+    };
+
+    const effectiveRiskPolicy = buildEffectiveRiskPolicy({
+      ...tradingConfig,
+      risk_policy: mergedOverrides
+    });
+    const normalizedOverrides = buildOverridesFromEffective(effectiveRiskPolicy, RISK_POLICY);
+    tradingConfig.risk_policy = normalizedOverrides;
+    await setTradingConfig(tradingConfig);
+
+    return res.json({
+      risk_policy: effectiveRiskPolicy,
+      overrides: normalizedOverrides,
+      updated_at: nowIso()
+    });
+  } catch (err) {
+    return sendApiError(res, 500, 'INTERNAL_ERROR', 'Failed to update risk policy', { reason: err.message });
+  }
+});
+
+app.get('/v1/strategy/config', async (req, res) => {
+  try {
+    const tradingConfig = await getTradingConfig();
+    const riskPolicy = buildEffectiveRiskPolicy(tradingConfig);
+    const strategyConfig = buildEffectiveStrategyConfig(tradingConfig, riskPolicy);
+    const baselineStrategyConfig = buildEffectiveStrategyConfig({ strategy_config: {} }, riskPolicy);
+    const overrides = sanitizeStrategyConfigPatch(tradingConfig?.strategy_config || {});
+    return res.json({
+      strategy_config: strategyConfig,
+      overrides,
+      defaults: baselineStrategyConfig
+    });
+  } catch (err) {
+    return sendApiError(res, 500, 'INTERNAL_ERROR', 'Failed to fetch strategy config', { reason: err.message });
+  }
+});
+
+app.put('/v1/strategy/config', async (req, res) => {
+  const payload = req.body?.strategy_config !== undefined ? req.body.strategy_config : req.body;
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return sendApiError(res, 400, 'BAD_REQUEST', 'strategy config payload must be a JSON object', {});
+  }
+
+  const patch = sanitizeStrategyConfigPatch(payload);
+  if (Object.keys(patch).length === 0) {
+    return sendApiError(res, 400, 'BAD_REQUEST', 'No valid strategy config fields were provided', {});
+  }
+
+  try {
+    const tradingConfig = await getTradingConfig();
+    const riskPolicy = buildEffectiveRiskPolicy(tradingConfig);
+    const baselineStrategyConfig = buildEffectiveStrategyConfig({ strategy_config: {} }, riskPolicy);
+    const currentOverrides = sanitizeStrategyConfigPatch(tradingConfig?.strategy_config || {});
+    const mergedOverrides = {
+      ...currentOverrides,
+      ...patch
+    };
+
+    const effectiveStrategyConfig = buildEffectiveStrategyConfig({
+      ...tradingConfig,
+      strategy_config: mergedOverrides
+    }, riskPolicy);
+    const normalizedOverrides = buildOverridesFromEffective(effectiveStrategyConfig, baselineStrategyConfig);
+    tradingConfig.strategy_config = normalizedOverrides;
+    await setTradingConfig(tradingConfig);
+
+    return res.json({
+      strategy_config: effectiveStrategyConfig,
+      overrides: normalizedOverrides,
+      updated_at: nowIso()
+    });
+  } catch (err) {
+    return sendApiError(res, 500, 'INTERNAL_ERROR', 'Failed to update strategy config', { reason: err.message });
+  }
+});
+
+app.get('/v1/risk/anomaly-detection', async (req, res) => {
+  const symbol = req.query.symbol || DEFAULT_SYMBOL;
+  if (typeof symbol !== 'string' || symbol.trim().length === 0) {
+    return sendApiError(res, 400, 'BAD_REQUEST', 'symbol is required', {});
+  }
+
+  try {
+    const [pool, tradingConfig] = await Promise.all([
+      getDbPool(),
+      getTradingConfig()
+    ]);
+    const riskPolicy = buildEffectiveRiskPolicy(tradingConfig);
+    const strategyConfig = buildEffectiveStrategyConfig(tradingConfig, riskPolicy);
+    const enabled = strategyConfig.anomalyDetectionEnabled !== false;
+    const anomaly = enabled
+      ? await detectRecentPriceAnomaly(pool, symbol, riskPolicy)
+      : null;
+
+    return res.json({
+      symbol,
+      enabled,
+      anomaly,
+      policy: {
+        window_seconds: riskPolicy.anomalyWindowSeconds,
+        warn_move_pct_60s: riskPolicy.anomalyWarnMovePct60s,
+        auto_kill_move_pct_60s: riskPolicy.anomalyAutoKillMovePct60s,
+        auto_kill_enabled: riskPolicy.anomalyAutoKillEnabled
+      }
+    });
+  } catch (err) {
+    return sendApiError(res, 500, 'INTERNAL_ERROR', 'Failed to evaluate anomaly detection', { reason: err.message });
+  }
+});
+
+app.post('/v1/risk/anomaly-detection/check', async (req, res) => {
+  const symbol = req.body?.symbol || DEFAULT_SYMBOL;
+  const actor = req.body?.actor || 'api';
+  const autoKill = req.body?.auto_kill === undefined ? true : parseBoolean(req.body?.auto_kill, null);
+  const logWarning = req.body?.log_warning === undefined ? true : parseBoolean(req.body?.log_warning, null);
+
+  if (typeof symbol !== 'string' || symbol.trim().length === 0) {
+    return sendApiError(res, 400, 'BAD_REQUEST', 'symbol is required', {});
+  }
+  if (autoKill === null) {
+    return sendApiError(res, 400, 'BAD_REQUEST', 'auto_kill must be boolean when provided', {});
+  }
+  if (logWarning === null) {
+    return sendApiError(res, 400, 'BAD_REQUEST', 'log_warning must be boolean when provided', {});
+  }
+
+  try {
+    const [pool, tradingConfig] = await Promise.all([
+      getDbPool(),
+      getTradingConfig()
+    ]);
+    const riskPolicy = buildEffectiveRiskPolicy(tradingConfig);
+    const strategyConfig = buildEffectiveStrategyConfig(tradingConfig, riskPolicy);
+    const enabled = strategyConfig.anomalyDetectionEnabled !== false;
+    if (!enabled) {
+      return res.json({
+        symbol,
+        enabled: false,
+        checked_at: nowIso(),
+        anomaly: null,
+        warning_log: { logged: false, order_id: null, reason: 'anomaly_detection_disabled' },
+        kill_switch: { attempted: false, activated: false, alreadyActive: false }
+      });
+    }
+
+    const evaluation = await evaluateAnomalyForSymbol(pool, symbol, riskPolicy, {
+      autoKill,
+      logWarning,
+      actor
+    });
+
+    return res.json({
+      symbol,
+      enabled: true,
+      checked_at: nowIso(),
+      ...evaluation
+    });
+  } catch (err) {
+    return sendApiError(res, 500, 'INTERNAL_ERROR', 'Failed to run anomaly check', { reason: err.message });
   }
 });
 
@@ -1538,6 +2081,12 @@ app.listen(PORT, '127.0.0.1', () => {
   console.log('  GET  /v1/positions');
   console.log('  GET  /v1/portfolio/snapshots');
   console.log('  GET  /v1/risk/events');
+  console.log('  GET  /v1/risk/policy');
+  console.log('  PUT  /v1/risk/policy');
+  console.log('  GET  /v1/strategy/config');
+  console.log('  PUT  /v1/strategy/config');
+  console.log('  GET  /v1/risk/anomaly-detection');
+  console.log('  POST /v1/risk/anomaly-detection/check');
   console.log('  GET  /v1/kill-switch');
   console.log('  POST /v1/kill-switch');
   console.log('  GET  /v1/devnet/smoke-runs');

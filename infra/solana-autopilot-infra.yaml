@@ -1,0 +1,311 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Solana Autopilot - Extended infrastructure (RDS, Secrets, IAM, CloudWatch)'
+
+Parameters:
+  OpenClawVpcId:
+    Type: AWS::EC2::VPC::Id
+    Description: "VPC ID from the OpenClaw CloudFormation stack"
+
+  OpenClawSecurityGroupId:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: "Security Group ID of the OpenClaw EC2 instance"
+
+  OpenClawInstanceId:
+    Type: String
+    Description: "EC2 Instance ID from the OpenClaw stack (for CloudWatch alarms)"
+
+  DBInstanceClass:
+    Type: String
+    Default: "db.t4g.micro"
+    Description: "RDS instance class (Graviton for cost savings)"
+    AllowedValues:
+      - "db.t4g.micro"
+      - "db.t4g.small"
+      - "db.t4g.medium"
+
+  DBName:
+    Type: String
+    Default: "solana_autopilot"
+    Description: "PostgreSQL database name"
+    AllowedPattern: "[a-zA-Z_][a-zA-Z0-9_]*"
+
+  DBMasterUsername:
+    Type: String
+    Default: "autopilot_admin"
+    Description: "Database master username"
+    AllowedPattern: "[a-zA-Z][a-zA-Z0-9_]*"
+
+  SolanaRpcUrl:
+    Type: String
+    Default: "https://api.mainnet-beta.solana.com"
+    Description: "Solana RPC endpoint URL (mainnet for real-time data)"
+
+Resources:
+  # ==================== Private Subnet for RDS ====================
+  # Use the existing VPC from the OpenClaw stack
+  RDSSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref OpenClawVpcId
+      CidrBlock: "10.0.10.0/24"
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-rds-subnet-a"
+
+  RDSSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref OpenClawVpcId
+      CidrBlock: "10.0.11.0/24"
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-rds-subnet-b"
+
+  RDSSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: "Subnet group for Solana Autopilot RDS"
+      SubnetIds:
+        - !Ref RDSSubnetA
+        - !Ref RDSSubnetB
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-rds-subnet-group"
+
+  # ==================== RDS Security Group ====================
+  RDSSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Security group for Solana Autopilot RDS"
+      VpcId: !Ref OpenClawVpcId
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref OpenClawSecurityGroupId
+          Description: "PostgreSQL from OpenClaw EC2"
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-rds-sg"
+
+  # ==================== RDS PostgreSQL ====================
+  DBMasterSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "${AWS::StackName}/db-credentials"
+      Description: "RDS master credentials for Solana Autopilot"
+      GenerateSecretString:
+        SecretStringTemplate: !Sub '{"username": "${DBMasterUsername}"}'
+        GenerateStringKey: "password"
+        PasswordLength: 32
+        ExcludeCharacters: '"@/\'
+
+  RDSInstance:
+    Type: AWS::RDS::DBInstance
+    DeletionPolicy: Snapshot
+    Properties:
+      DBInstanceIdentifier: !Sub "${AWS::StackName}-db"
+      DBInstanceClass: !Ref DBInstanceClass
+      Engine: postgres
+      EngineVersion: "16.12"
+      DBName: !Ref DBName
+      MasterUsername: !Ref DBMasterUsername
+      MasterUserPassword: !Sub "{{resolve:secretsmanager:${DBMasterSecret}:SecretString:password}}"
+      AllocatedStorage: 20
+      MaxAllocatedStorage: 50
+      StorageType: gp3
+      PubliclyAccessible: false
+      DBSubnetGroupName: !Ref RDSSubnetGroup
+      VPCSecurityGroups:
+        - !Ref RDSSecurityGroup
+      BackupRetentionPeriod: 7
+      MultiAZ: false
+      DeletionProtection: false
+      EnablePerformanceInsights: true
+      PerformanceInsightsRetentionPeriod: 7
+      Tags:
+        - Key: Name
+          Value: !Sub "${AWS::StackName}-rds"
+
+  # Attach secret to RDS instance for rotation support
+  SecretRDSAttachment:
+    Type: AWS::SecretsManager::SecretTargetAttachment
+    Properties:
+      SecretId: !Ref DBMasterSecret
+      TargetId: !Ref RDSInstance
+      TargetType: AWS::RDS::DBInstance
+
+  # ==================== Additional Secrets ====================
+  SolanaRpcSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "${AWS::StackName}/solana-rpc"
+      Description: "Solana RPC endpoint configuration"
+      SecretString: !Sub |
+        {
+          "rpc_url": "${SolanaRpcUrl}",
+          "ws_url": ""
+        }
+
+  TradingConfigSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "${AWS::StackName}/trading-config"
+      Description: "Trading engine configuration"
+      SecretString: |
+        {
+          "paper_mode": true,
+          "max_position_size_usd": 1000,
+          "max_daily_loss_usd": 100,
+          "cooldown_seconds": 60,
+          "kill_switch_active": false
+        }
+
+  # ==================== IAM Policy Extensions ====================
+  # Additional policy for the OpenClaw EC2 role to access new resources
+  AutopilotAccessPolicy:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      ManagedPolicyName: !Sub "${AWS::StackName}-autopilot-access"
+      Description: "Grants OpenClaw EC2 instance access to Solana Autopilot resources"
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Sid: SecretsManagerAccess
+            Effect: Allow
+            Action:
+              - 'secretsmanager:GetSecretValue'
+              - 'secretsmanager:PutSecretValue'
+              - 'secretsmanager:DescribeSecret'
+            Resource:
+              - !Ref DBMasterSecret
+              - !Ref SolanaRpcSecret
+              - !Ref TradingConfigSecret
+          - Sid: CloudWatchMetrics
+            Effect: Allow
+            Action:
+              - 'cloudwatch:PutMetricData'
+            Resource: '*'
+            Condition:
+              StringEquals:
+                'cloudwatch:namespace': 'SolanaAutopilot'
+          - Sid: CloudWatchLogs
+            Effect: Allow
+            Action:
+              - 'logs:CreateLogGroup'
+              - 'logs:CreateLogStream'
+              - 'logs:PutLogEvents'
+            Resource: !Sub 'arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/solana-autopilot/*'
+
+  # ==================== CloudWatch Alarms ====================
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/solana-autopilot/${AWS::StackName}"
+      RetentionInDays: 30
+
+  # EC2 CPU alarm (uses the OpenClaw instance)
+  EC2CPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-ec2-cpu-high"
+      AlarmDescription: "EC2 CPU utilization > 80%"
+      Namespace: AWS/EC2
+      MetricName: CPUUtilization
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: InstanceId
+          Value: !Ref OpenClawInstanceId
+
+  # RDS connection count alarm
+  RDSConnectionsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-rds-connections-high"
+      AlarmDescription: "RDS connection count > 50"
+      Namespace: AWS/RDS
+      MetricName: DatabaseConnections
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 50
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: DBInstanceIdentifier
+          Value: !Ref RDSInstance
+
+  # RDS CPU alarm
+  RDSCPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-rds-cpu-high"
+      AlarmDescription: "RDS CPU utilization > 80%"
+      Namespace: AWS/RDS
+      MetricName: CPUUtilization
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 80
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: DBInstanceIdentifier
+          Value: !Ref RDSInstance
+
+  # Custom kill switch alarm (triggered when kill switch is activated)
+  KillSwitchAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "${AWS::StackName}-kill-switch-activated"
+      AlarmDescription: "Kill switch was activated - all trading halted"
+      Namespace: SolanaAutopilot
+      MetricName: KillSwitchActivated
+      Statistic: Sum
+      Period: 60
+      EvaluationPeriods: 1
+      Threshold: 0
+      ComparisonOperator: GreaterThanThreshold
+
+Outputs:
+  RDSEndpoint:
+    Description: "RDS PostgreSQL endpoint"
+    Value: !GetAtt RDSInstance.Endpoint.Address
+    Export:
+      Name: !Sub "${AWS::StackName}-RDSEndpoint"
+
+  RDSPort:
+    Description: "RDS PostgreSQL port"
+    Value: !GetAtt RDSInstance.Endpoint.Port
+    Export:
+      Name: !Sub "${AWS::StackName}-RDSPort"
+
+  DBSecretArn:
+    Description: "ARN of the database credentials secret"
+    Value: !Ref DBMasterSecret
+    Export:
+      Name: !Sub "${AWS::StackName}-DBSecretArn"
+
+  SolanaRpcSecretArn:
+    Description: "ARN of the Solana RPC configuration secret"
+    Value: !Ref SolanaRpcSecret
+
+  TradingConfigSecretArn:
+    Description: "ARN of the trading configuration secret"
+    Value: !Ref TradingConfigSecret
+
+  AutopilotPolicyArn:
+    Description: "ARN of the IAM policy to attach to the OpenClaw EC2 role"
+    Value: !Ref AutopilotAccessPolicy
+
+  DatabaseName:
+    Description: "PostgreSQL database name"
+    Value: !Ref DBName
+
+  LogGroupName:
+    Description: "CloudWatch log group for Solana Autopilot"
+    Value: !Ref LogGroup

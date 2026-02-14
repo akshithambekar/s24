@@ -1,0 +1,30 @@
+[
+  {
+    "ParameterKey": "OpenClawVpcId",
+    "ParameterValue": "vpc-0bdc72c4f101a104e"
+  },
+  {
+    "ParameterKey": "OpenClawSecurityGroupId",
+    "ParameterValue": "sg-0dd1629bda8a3de68"
+  },
+  {
+    "ParameterKey": "OpenClawInstanceId",
+    "ParameterValue": "i-0be15780adbd4dde5"
+  },
+  {
+    "ParameterKey": "DBInstanceClass",
+    "ParameterValue": "db.t4g.micro"
+  },
+  {
+    "ParameterKey": "DBName",
+    "ParameterValue": "solana_autopilot"
+  },
+  {
+    "ParameterKey": "DBMasterUsername",
+    "ParameterValue": "autopilot_admin"
+  },
+  {
+    "ParameterKey": "SolanaRpcUrl",
+    "ParameterValue": "https://api.mainnet-beta.solana.com"
+  }
+]

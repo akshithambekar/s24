@@ -1,0 +1,18 @@
+[
+  {
+    "ParameterKey": "KeyPairName",
+    "ParameterValue": "openclaw-key"
+  },
+  {
+    "ParameterKey": "OpenClawModel",
+    "ParameterValue": "global.anthropic.claude-opus-4-5-20251101-v1:0"
+  },
+  {
+    "ParameterKey": "InstanceType",
+    "ParameterValue": "c7g.large"
+  },
+  {
+    "ParameterKey": "CreateVPCEndpoints",
+    "ParameterValue": "false"
+  }
+]

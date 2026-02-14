@@ -1,6 +1,6 @@
 # Remaining Work — Solana Autopilot
 
-> Status as of 2026-02-14. Covers Phases 3-5 from PROJECT_SPEC.md.
+> Status as of 2026-02-14 (evening). Covers Phases 3-5 from PROJECT_SPEC.md.
 
 ## What's Done
 
@@ -12,10 +12,15 @@
 | 4 custom skills deployed to EC2 | Done |
 | Paper trade CLI (`propose-order.js`) with embedded risk checks | Done |
 | Devnet smoke test (`smoke-test.sh`) | Done |
-| Market data adapter (`ingest-jupiter-ticks.js`) | Built, not deployed as service |
+| Market data adapter as systemd service on EC2 | Done — ticks flowing every 10s |
+| Jupiter API key in Secrets Manager + IAM policy | Done |
 | Status API on :3001 (health, kill switch, portfolio summary, logs) | Done |
 | Risk policy spec (`strategy-risk` branch) | Done |
 | SSM access, port forwarding, health checks | Done |
+| System prompt with Trading API instructions | Done |
+| Bootstrap.sh updated (7-step, includes market data adapter) | Done |
+| Process supervision watchdog (systemd timer, 60s) | Done — deployed on EC2 |
+| Deployment validation script (8 checks, all passing) | Done |
 
 ## What's Missing
 
@@ -25,7 +30,6 @@
 | Trade cycle orchestrator (`POST /v1/trade/cycle`) | Not started |
 | Strategy engine (autonomous signal generation) | Not started |
 | Standalone risk engine service | Embedded in propose-order.js only |
-| Market data adapter as systemd service on EC2 | Not deployed |
 | Web UI (deploy, configure, monitor) | Not started |
 | Authentication/authorization | Not started |
 | Tests | Not started |
@@ -36,36 +40,46 @@
 
 Owner: Infrastructure, OpenClaw orchestration, deployment pipeline.
 
-### P1.1 Deploy market data adapter as a systemd service
-- Create `deploy-market-data.sh` (like `deploy-api.sh` pattern)
-- Write `ingest-jupiter-ticks.js` and `package.json` to `/home/ubuntu/market-data-adapter/`
-- Create systemd user service `market-data-adapter.service`
-- Connect to RDS via Secrets Manager
-- Enable and start, verify ticks flowing into `market_ticks` table
-- **Exit criteria**: `SELECT * FROM market_ticks ORDER BY event_at DESC LIMIT 1` returns a row <15s old
+### P1.1 Deploy market data adapter as a systemd service — DONE
+- Created `scripts/deploy-market-data.sh` (follows `deploy-api.sh` heredoc pattern)
+- Deployed `ingest-jupiter-ticks.js` + `package.json` to `/home/ubuntu/market-data-adapter/`
+- systemd user service `market-data-adapter.service` enabled and running
+- Jupiter API key stored in Secrets Manager (`solana-autopilot-infra/jupiter-api-key`), IAM policy updated (v3)
+- Adapter loads API key at startup, sends `x-api-key` header on all Jupiter requests
+- Fixed bid/ask inversion (`Math.min/max` normalization) for DB `ask_price >= bid_price` constraint
+- **Exit criteria met**: ticks flowing every 10s, latest tick <15s old
+- Node path: `/home/ubuntu/.nvm/versions/node/v22.22.0/bin/node` (exact, not glob)
 
-### P1.2 Add market data adapter to bootstrap.sh
-- Add step to bootstrap.sh that installs and starts the adapter service
-- Ensure it starts after RDS credentials are fetched (step depends on current step 5)
+### P1.2 Add market data adapter to bootstrap.sh — DONE
+- bootstrap.sh renumbered from 6 to 7 steps
+- New step `[6/7]` copies adapter from repo, npm installs, creates systemd service, starts it
+- Runs after RDS credentials (step 5/7), before gateway restart (step 7/7)
 
-### P1.3 OpenClaw orchestration hooks
-- Update system prompt (`clawd/system.md`) to teach the agent how to trigger trade cycles via the `/v1/trade/cycle` API endpoint (once Person 2 builds it)
-- Add skill instructions for calling the Trading API instead of `propose-order.js` directly
-- Test: ask agent "start a trade cycle" → it calls the API → full pipeline runs
+### P1.3 OpenClaw orchestration hooks — DONE
+- System prompt (`clawd/system.md`) updated with Trading API Integration section
+- Documents `/v1/trade/cycle`, `/v1/bot/status`, `/v1/portfolio/snapshots` endpoints with curl examples
+- Notes 423 (kill switch) and 409 (duplicate) responses
+- Fallback: agent can still use `propose-order.js` for manual trades
+- **Remaining**: test end-to-end once Person 2 builds `/v1/trade/cycle`
 
-### P1.4 Process supervision and recovery
-- Add health check cron that verifies all 3 services are running: `openclaw-gateway` (:18789), `autopilot-api` (:3001), `market-data-adapter`
-- Auto-restart any that have crashed
-- Write results to CloudWatch custom metrics
+### P1.4 Process supervision and recovery — DONE
+- Created `scripts/deploy-watchdog.sh`, deployed to EC2
+- `check-services.sh` monitors gateway (:18789), API (:3001), market-data-adapter
+- Auto-restarts any crashed service
+- Pushes `HealthyServices` and `ServiceRestarts` CloudWatch metrics
+- systemd timer fires every 60s, log at `/home/ubuntu/watchdog/watchdog.log`
+- Log auto-trimmed at 5000 lines
 
-### P1.5 Deployment validation script
-- Script that runs after bootstrap and verifies everything is healthy:
-  - Gateway listening on :18789
-  - API listening on :3001
-  - Market data adapter running and inserting ticks
-  - All 5 skill directories present
-  - DB connectivity and table count = 9
-- Print pass/fail summary
+### P1.5 Deployment validation script — DONE
+- Created `scripts/validate-deployment.sh`, all 8 checks passing on EC2:
+  1. Gateway listening on :18789 — PASS
+  2. API listening on :3001 — PASS
+  3. Market data adapter running — PASS
+  4. Skills installed (4 found) — PASS
+  5. DB connectivity — PASS
+  6. Table count (9 tables) — PASS
+  7. Market data fresh (2s old) — PASS
+  8. Trading config (paper_mode=True) — PASS
 
 ---
 
@@ -290,24 +304,28 @@ P2.5 (deploy API)           ──→  P4.8 (UI needs live backend)
 
 ### Suggested Parallel Work Order
 
+**DONE (Person 1 infra complete):**
+- ~~P1.1 — Deploy market data adapter~~ DONE
+- ~~P1.2 — Add to bootstrap.sh~~ DONE
+- ~~P1.3 — OpenClaw orchestration hooks~~ DONE (system prompt ready, pending P2 API)
+- ~~P1.4 — Process supervision~~ DONE
+- ~~P1.5 — Validation script~~ DONE
+
 **Immediate (can start now, no dependencies):**
-- P1.1 — Deploy market data adapter (quick win, unlocks everything)
 - P3.1 — Build strategy engine module
 - P3.2 — Build risk engine module
 - P4.1 — Scaffold UI project
 
-**Next (needs P1.1, P3.1, P3.2):**
+**Next (needs P3.1, P3.2):**
 - P2.1 — Build full Trading API
 - P2.2 — Build trade cycle orchestrator
 - P4.2-P4.3 — Auth + deploy pages
 
 **Then (needs P2.1):**
-- P1.3 — OpenClaw orchestration hooks
 - P2.4 — Background scheduler
 - P4.4-P4.7 — Dashboard pages
 
 **Finally (needs everything above):**
-- P1.4-P1.5 — Process supervision, validation
 - P2.5 — Deploy updated API
 - P3.6 — Safety tests
 - P4.8-P4.9 — Deploy UI, demo script

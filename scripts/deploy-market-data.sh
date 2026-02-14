@@ -1,3 +1,36 @@
+#!/bin/bash
+# deploy-market-data.sh - Deploys the Jupiter market data adapter on the OpenClaw EC2 instance
+# This creates a Node.js service that polls Jupiter for SOL-USDC ticks and writes to RDS
+# Run via SSM: push this to the instance, then execute
+
+set -euo pipefail
+
+echo "Installing Solana Market Data Adapter..."
+
+# Create the adapter directory
+mkdir -p /home/ubuntu/market-data-adapter
+
+# Write package.json
+cat > /home/ubuntu/market-data-adapter/package.json << 'PKGJSON'
+{
+  "name": "solana-market-data-adapter",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Ingest live SOL-USDC ticks from Jupiter and persist into market_ticks",
+  "main": "ingest-jupiter-ticks.js",
+  "scripts": {
+    "start": "node ingest-jupiter-ticks.js",
+    "once": "node ingest-jupiter-ticks.js --once"
+  },
+  "dependencies": {
+    "@aws-sdk/client-secrets-manager": "^3.700.0",
+    "pg": "^8.13.0"
+  }
+}
+PKGJSON
+
+# Write the ingestion script
+cat > /home/ubuntu/market-data-adapter/ingest-jupiter-ticks.js << 'TICKJS'
 #!/usr/bin/env node
 "use strict";
 
@@ -272,3 +305,63 @@ run().catch((err) => {
   console.error(err.message);
   process.exit(1);
 });
+TICKJS
+
+# Install dependencies
+cd /home/ubuntu/market-data-adapter
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+npm install --production 2>&1
+
+# Create systemd service
+mkdir -p /home/ubuntu/.config/systemd/user
+
+cat > /home/ubuntu/.config/systemd/user/market-data-adapter.service << 'SVCEOF'
+[Unit]
+Description=Solana Market Data Adapter (Jupiter ticks)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/ubuntu/market-data-adapter
+ExecStart=/home/ubuntu/.nvm/versions/node/v22.22.0/bin/node ingest-jupiter-ticks.js
+Restart=always
+RestartSec=5
+Environment=POLL_INTERVAL_MS=10000
+Environment=AWS_REGION=us-east-1
+Environment=DB_SECRET_ID=solana-autopilot-infra/db-credentials
+Environment=JUPITER_API_KEY_SECRET_ID=solana-autopilot-infra/jupiter-api-key
+
+[Install]
+WantedBy=default.target
+SVCEOF
+
+# Enable and start
+XDG_RUNTIME_DIR=/run/user/1000 systemctl --user daemon-reload
+XDG_RUNTIME_DIR=/run/user/1000 systemctl --user enable market-data-adapter
+XDG_RUNTIME_DIR=/run/user/1000 systemctl --user start market-data-adapter
+
+sleep 3
+echo "Market Data Adapter Status:"
+XDG_RUNTIME_DIR=/run/user/1000 systemctl --user status market-data-adapter --no-pager || true
+
+# Verify with DB query for recent ticks
+echo ""
+echo "Checking for recent market ticks..."
+export NVM_DIR="$HOME/.nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"
+node -e "
+const { SecretsManagerClient, GetSecretValueCommand } = require('@aws-sdk/client-secrets-manager');
+const { Pool } = require('pg');
+(async () => {
+  const sm = new SecretsManagerClient({ region: 'us-east-1' });
+  const resp = await sm.send(new GetSecretValueCommand({ SecretId: 'solana-autopilot-infra/db-credentials' }));
+  const creds = JSON.parse(resp.SecretString);
+  const pool = new Pool({ host: creds.host, port: creds.port, database: creds.dbname, user: creds.username, password: creds.password, ssl: { rejectUnauthorized: false } });
+  const res = await pool.query('SELECT event_at, mid_price, spread_bps FROM market_ticks ORDER BY event_at DESC LIMIT 3');
+  console.log('Recent ticks:', JSON.stringify(res.rows, null, 2));
+  await pool.end();
+})().catch(e => console.error('DB check failed:', e.message));
+" 2>&1 || echo "DB verification skipped"
+
+echo "Done!"

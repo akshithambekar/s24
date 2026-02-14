@@ -1,6 +1,6 @@
 # Remaining Work — Solana Autopilot
 
-> Status as of 2026-02-14 (evening). Covers Phases 3-5 from PROJECT_SPEC.md.
+> Status as of 2026-02-14 (latest). Covers Phases 3-5 from PROJECT_SPEC.md.
 
 ## What's Done
 
@@ -26,13 +26,18 @@
 
 | Component | Status |
 |-----------|--------|
-| Full Trading API (`/v1/*` per API_CONTRACT.md) | Not started |
-| Trade cycle orchestrator (`POST /v1/trade/cycle`) | Not started |
-| Strategy engine (autonomous signal generation) | Not started |
-| Standalone risk engine service | Embedded in propose-order.js only |
+| Full Trading API (`/v1/*`) | Built in `deploy-api.sh`, **not yet deployed to EC2** (ExecStart glob still needs fix) |
+| Trade cycle orchestrator (`POST /v1/trade/cycle`) | Built (inline risk engine), **not yet deployed to EC2** |
+| Kill switch endpoints (`GET/POST /v1/kill-switch`) | Done — built in `deploy-api.sh` |
+| Risk events endpoint (`GET /v1/risk/events`) | Done — built in `deploy-api.sh` |
+| Dynamic risk policy config (`GET/PUT /v1/risk/policy`) | Not started |
+| Dynamic strategy config (`GET/PUT /v1/strategy/config`) | Not started |
+| Strategy engine (autonomous signal generation) | Not started — trade cycle accepts `proposal` from caller |
+| Anomaly detection (>5% price move auto-kill) | Not started |
+| Background scheduler (auto-trigger cycles) | Not started |
 | Web UI (deploy, configure, monitor) | Not started |
 | Authentication/authorization | Not started |
-| Tests | Not started |
+| Safety tests | Not started |
 
 ---
 
@@ -87,54 +92,38 @@ Owner: Infrastructure, OpenClaw orchestration, deployment pipeline.
 
 Owner: Full Trading API service, market data integration, paper execution.
 
-### P2.1 Build the full `/v1/*` Trading API
-Extend or replace the existing Status API (`deploy-api.sh`) to implement all endpoints from `API_CONTRACT.md`:
+### P2.1 Build the full `/v1/*` Trading API — DONE
+All 11 endpoints implemented in `deploy-api.sh` (~1465 lines):
+- `/v1/health`, `/v1/bot/status`, `/v1/trade/cycle`, `/v1/orders`, `/v1/fills`, `/v1/positions`, `/v1/portfolio/snapshots`, `/v1/risk/events`, `/v1/kill-switch` (GET+POST), `/v1/devnet/smoke-runs`
+- Cursor pagination (base64-encoded `{t,id}` cursors, default 50, max 200)
+- `from`/`to` ISO-8601 date filters on all list endpoints
+- Standard error shape (`{ error: { code, message, details } }`)
+- `X-Request-Id` echo middleware
+- Idempotency on `POST /v1/trade/cycle` via `idempotency_key` (DB-backed)
+- Legacy `/api/deploy/*` endpoints retained for backward compatibility
+- **Note**: `ExecStart` glob in systemd unit needs fix (`v22.*` → `v22.22.0`)
 
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/v1/health` | GET | Service + dependency health (DB, market data staleness) |
-| `/v1/bot/status` | GET | Mode, state, kill switch, last cycle, last tick, staleness |
-| `/v1/trade/cycle` | POST | Trigger one strategy→risk→execution cycle (idempotent) |
-| `/v1/orders` | GET | Order history with cursor pagination, filters (symbol, status, from/to) |
-| `/v1/fills` | GET | Fill history with cursor pagination, filters |
-| `/v1/positions` | GET | Current positions with optional symbol filter |
-| `/v1/portfolio/snapshots` | GET | NAV/PnL timeline with cursor pagination |
-| `/v1/risk/events` | GET | Risk audit trail with cursor pagination |
-| `/v1/kill-switch` | POST | Toggle kill switch (writes kill_switch_events) |
-| `/v1/kill-switch` | GET | Current state + recent events |
-| `/v1/devnet/smoke-runs` | GET | Smoke test history with cursor pagination |
+### P2.2 Implement `POST /v1/trade/cycle` orchestrator — DONE
+Full pipeline implemented inline in `deploy-api.sh`:
+1. Kill switch check → 423
+2. Idempotency key check → 409 on duplicate (DB-backed reservation)
+3. Market data staleness check (30s stale, 120s auto-kill)
+4. Auto kill switch on prolonged stale data (>120s)
+5. Strategy: accepts `proposal` object from caller (side, qty_sol, confidence, price_movement_5m_pct)
+6. Signal + order insertion in transaction
+7. Full risk engine (11 rules) evaluates inline
+8. If rejected: order status=rejected, risk_event logged, 409 RISK_BLOCKED
+9. If approved: simulated fill, position upsert (weighted avg entry), portfolio snapshot
+10. Returns cycle_id, order_id, fill_id, status
 
-Requirements:
-- Cursor pagination on all list endpoints (default 50, max 200)
-- `from`/`to` ISO-8601 date filters
-- Standard error shape from API_CONTRACT.md section 3
-- Decimal values serialized as strings (no float drift)
-- `Authorization: Bearer <token>` header (can use gateway token for now)
-- `X-Request-Id` echo
-- Idempotency on `POST /v1/trade/cycle` via `idempotency_key`
-
-### P2.2 Implement `POST /v1/trade/cycle` orchestrator
-This is the core endpoint that chains the full pipeline:
-1. Check kill switch → 423 if active
-2. Check idempotency_key → 409 if duplicate
-3. Fetch latest market tick → error if stale (>30s per risk policy)
-4. Call Person 3's strategy engine to generate signal
-5. Insert signal row
-6. Create order with status `proposed`
-7. Call Person 3's risk engine to approve/reject
-8. If rejected: update order, insert risk_event, return result
-9. If approved: simulate fill, upsert position, capture snapshot
-10. Return cycle result with cycle_id, order_id, fill details
-
-### P2.3 Integrate risk policy values from `strategy-risk` branch
-Update `trading-config.json` defaults and `propose-order.js` to use Person 3's tighter limits:
-- Max single order: 1 SOL (not $1000 USD)
-- Max exposure: 3 SOL
-- Staleness: 30s (not 60s)
-- Cooldown: 60s
-- Min confidence: 0.7
-- Max daily loss: 0.5 SOL
-- Auto kill switch on 1 SOL drawdown
+### P2.3 Integrate risk policy values — DONE
+`RISK_POLICY` object embedded in server.js with all spec values:
+- `maxSingleOrderSol: 1`, `maxOpenExposureSol: 3`, `maxOpenPositions: 3`
+- `maxDrawdownSol: 1`, `maxLossPerTradeSol: 0.3`, `maxDailyLossSol: 0.5`
+- `cooldownSeconds: 60`, `maxTradesPerHour: 10`, `maxTradesPerDay: 50`
+- `minConfidence: 0.7`, `minPriceMovePct5m: 2`
+- `simulatedSlippagePct: 0.003`, `simulatedFeePct: 0.001`
+- Auto kill switch on drawdown (NAV drops 1 SOL below starting 10 SOL)
 
 ### P2.4 Background scheduler
 - Node.js scheduler (setInterval or node-cron) that auto-triggers trade cycles
@@ -154,52 +143,49 @@ Update `trading-config.json` defaults and `propose-order.js` to use Person 3's t
 
 Owner: Strategy engine, risk engine, kill switch logic.
 
-### P3.1 Build standalone strategy engine module
-Create `src/strategy/engine.js` (or integrate into Trading API):
+### P3.1 Build standalone strategy engine module — NOT STARTED
+The trade cycle currently accepts a `proposal` from the caller (OpenClaw agent or UI) rather than generating signals autonomously. A standalone strategy engine would:
 - Read latest N market ticks from `market_ticks` table
-- Implement at least one strategy (momentum):
-  - If price moved >2% in last 5 minutes → signal in that direction
-  - Confidence = magnitude of move / threshold (capped at 1.0)
-  - If spread > 50bps → reduce confidence by 0.2
+- Implement momentum strategy (>2% price move in 5 min → signal)
+- Confidence = magnitude / threshold (capped at 1.0), reduced by 0.2 if spread > 50bps
 - Output: `{ symbol, side, qty, confidence, reason }`
-- Write signal to `signals` table
-- Configurable parameters: lookback window, threshold %, confidence multiplier
+- Could run as part of the background scheduler (P2.4) or be called by the trade cycle
 
-### P3.2 Build standalone risk engine module
-Create `src/risk/engine.js` (or integrate into Trading API):
-- Accept order intent, return `APPROVED` or `REJECTED` with reason
-- Implement all checks from `docs/risk_policy.md`:
+### P3.2 Build standalone risk engine module — DONE (embedded in Trading API)
+All 11 risk checks implemented inline in `/v1/trade/cycle` handler in `deploy-api.sh`:
+- `MAX_SINGLE_ORDER_SIZE` (>1 SOL)
+- `MAX_TOTAL_OPEN_EXPOSURE` (>3 SOL)
+- `MAX_OPEN_POSITIONS` (>3)
+- `MAX_LOSS_PER_TRADE` (>0.3 SOL)
+- `MAX_DAILY_LOSS` (>0.5 SOL)
+- `COOLDOWN_SECONDS` (<60s since last trade)
+- `MAX_TRADES_PER_HOUR` (>10)
+- `MAX_TRADES_PER_DAY` (>50)
+- `MIN_CONFIDENCE` (<0.7)
+- `MIN_PRICE_MOVEMENT_5M` (<2%)
+- Kill switch + stale market data checks handled before risk evaluation
+- All decisions written to `risk_events` table
 
-| Check | Rule | Action |
-|-------|------|--------|
-| Kill switch | `kill_switch_active == true` | Reject: `KILL_SWITCH_ACTIVE` |
-| Confidence | `confidence < 0.7` | Reject: `LOW_CONFIDENCE` |
-| Staleness | `latest tick age > 30s` | Reject: `STALE_MARKET_DATA` |
-| Order size | `qty * price > 1 SOL equivalent` | Reject: `MAX_ORDER_SIZE` |
-| Position limit | `total exposure > 3 SOL` | Reject: `MAX_POSITION_NOTIONAL` |
-| Position count | `open positions > 3` | Reject: `MAX_OPEN_POSITIONS` |
-| Daily loss | `daily loss > 0.5 SOL` | Reject: `MAX_DAILY_LOSS` |
-| Drawdown | `NAV < 9 SOL (starting 10)` | Reject + auto kill switch: `MAX_DRAWDOWN` |
-| Cooldown | `last order < 60s ago` | Reject: `COOLDOWN_ACTIVE` |
-| Hourly cap | `orders this hour > 10` | Reject: `MAX_HOURLY_TRADES` |
-| Daily cap | `orders today > 50` | Reject: `MAX_DAILY_TRADES` |
-
-- Write all decisions to `risk_events` table
-
-### P3.3 Auto kill switch on drawdown
-- After every fill, check if NAV has dropped below drawdown threshold (starting NAV - max drawdown)
-- If breached: auto-activate kill switch, insert `kill_switch_events` row with reason `AUTO_DRAWDOWN`
-- Log to CloudWatch
+### P3.3 Auto kill switch on drawdown — DONE (embedded in Trading API)
+- Checked before every trade in `/v1/trade/cycle`
+- If `drawdownSol >= maxDrawdownSol` (1 SOL): auto-activates kill switch via `maybeActivateKillSwitch()`
+- Writes to `kill_switch_events` with actor `risk-engine`
+- Also auto-kills on prolonged stale market data (>120s)
 
 ### P3.4 Anomaly detection
 - After each market tick ingested, check for >5% price move in <60s
 - If detected: log warning, recommend kill switch activation (insert risk_event with action `warned`)
 - Optionally auto-activate kill switch on extreme moves (>10% in 60s)
 
-### P3.5 Risk management API endpoints
-Provide to Person 2 for integration into the Trading API:
-- `GET /v1/risk/policy` — current limits
-- `PUT /v1/risk/policy` — update limits dynamically
+### P3.5 Risk management API endpoints — PARTIALLY DONE
+Already built in `deploy-api.sh` (Person 2 overlap):
+- `GET /v1/risk/events` — ✅ done (paginated, cursor-based)
+- `GET /v1/kill-switch` — ✅ done (returns state + recent events)
+- `POST /v1/kill-switch` — ✅ done (enable/disable with actor + reason)
+
+Still needed:
+- `GET /v1/risk/policy` — return current `RISK_POLICY` values
+- `PUT /v1/risk/policy` — update limits dynamically (currently hardcoded in server.js)
 - `GET /v1/strategy/config` — current strategy parameters
 - `PUT /v1/strategy/config` — update strategy parameters
 
@@ -293,39 +279,37 @@ Owner: Standalone web UI, user workflows, demo.
 ## Dependencies
 
 ```
-P1.1 (market data service)  ──→  P2.2 (trade cycle needs fresh ticks)
+P1.1 (market data service)  ──→  P2.2 (trade cycle needs fresh ticks)     ✅ DONE
 P2.1 (Trading API)          ──→  P4.4-P4.7 (UI calls /v1/* endpoints)
-P3.1 (strategy engine)      ──→  P2.2 (trade cycle calls strategy)
-P3.2 (risk engine)          ──→  P2.2 (trade cycle calls risk checks)
-P2.2 (trade cycle)          ──→  P1.3 (OpenClaw hooks call the API)
-P2.1 (Trading API)          ──→  P3.5 (risk/strategy config endpoints)
+P3.2 (risk engine)          ──→  P2.2 (trade cycle calls risk checks)     ✅ DONE (inline)
+P2.2 (trade cycle)          ──→  P1.3 (OpenClaw hooks call the API)       ✅ DONE
 P2.5 (deploy API)           ──→  P4.8 (UI needs live backend)
+P3.1 (strategy engine)      ──→  P2.4 (scheduler needs autonomous signals)
 ```
 
 ### Suggested Parallel Work Order
 
-**DONE (Person 1 infra complete):**
-- ~~P1.1 — Deploy market data adapter~~ DONE
-- ~~P1.2 — Add to bootstrap.sh~~ DONE
-- ~~P1.3 — OpenClaw orchestration hooks~~ DONE (system prompt ready, pending P2 API)
-- ~~P1.4 — Process supervision~~ DONE
-- ~~P1.5 — Validation script~~ DONE
+**DONE:**
+- ~~P1.1–P1.5~~ — All Person 1 infra tasks
+- ~~P2.1~~ — Full `/v1/*` Trading API (built, needs EC2 deploy)
+- ~~P2.2~~ — Trade cycle orchestrator with inline risk engine
+- ~~P2.3~~ — Risk policy values integrated
+- ~~P3.2~~ — Risk engine (embedded in Trading API)
+- ~~P3.3~~ — Auto kill switch on drawdown (embedded in Trading API)
+- ~~P3.5 (partial)~~ — Kill switch endpoints + risk events endpoint (built in `deploy-api.sh`)
 
-**Immediate (can start now, no dependencies):**
-- P3.1 — Build strategy engine module
-- P3.2 — Build risk engine module
-- P4.1 — Scaffold UI project
+**Immediate (can start now):**
+- **P2.5** — Deploy updated `deploy-api.sh` to EC2 (fix `ExecStart` glob `v22.*` → `v22.22.0`, push via SSM)
+- **P4.1** — Scaffold UI project
 
-**Next (needs P3.1, P3.2):**
-- P2.1 — Build full Trading API
-- P2.2 — Build trade cycle orchestrator
+**Next (needs P2.5 deployed):**
+- P3.1 — Build strategy engine (for autonomous trading)
+- P2.4 — Background scheduler (needs P3.1 for signal generation)
+- P3.5 (remaining) — `GET/PUT /v1/risk/policy` + `GET/PUT /v1/strategy/config` (Person 3 designs, Person 2 integrates)
 - P4.2-P4.3 — Auth + deploy pages
+- P4.4-P4.7 — Dashboard pages (API is ready)
 
-**Then (needs P2.1):**
-- P2.4 — Background scheduler
-- P4.4-P4.7 — Dashboard pages
-
-**Finally (needs everything above):**
-- P2.5 — Deploy updated API
+**Finally:**
+- P3.4 — Anomaly detection
 - P3.6 — Safety tests
 - P4.8-P4.9 — Deploy UI, demo script

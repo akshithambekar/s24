@@ -71,6 +71,15 @@ const RISK_POLICY = {
   simulatedFeePct: 0.001
 };
 
+const schedulerState = {
+  enabled: false,
+  intervalMs: parseInt(process.env.SCHEDULER_INTERVAL_MS || '60000', 10),
+  lastTriggeredAt: null,
+  lastResult: null,
+  cycleCount: 0,
+  timer: null
+};
+
 const smClient = new SecretsManagerClient({ region: REGION });
 const cwClient = new CloudWatchClient({ region: REGION });
 
@@ -1401,6 +1410,121 @@ app.get('/api/portfolio/summary', async (req, res) => {
   }
 });
 
+// ==================== Background Scheduler ====================
+
+async function runScheduledCycle() {
+  const now = new Date().toISOString();
+  schedulerState.lastTriggeredAt = now;
+  schedulerState.cycleCount++;
+
+  try {
+    // Check kill switch before making the request
+    const config = await getTradingConfig();
+    if (config.kill_switch_active) {
+      const result = { status: 'skipped', reason: 'kill_switch_active', triggered_at: now };
+      schedulerState.lastResult = result;
+      console.log(`[scheduler] Cycle #${schedulerState.cycleCount} skipped — kill switch active`);
+      return result;
+    }
+
+    // Internal HTTP request to POST /v1/trade/cycle
+    const result = await new Promise((resolve, reject) => {
+      const payload = JSON.stringify({ trigger_source: 'scheduler' });
+      const req = http.request({
+        hostname: '127.0.0.1',
+        port: PORT,
+        path: '/v1/trade/cycle',
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) }
+      }, (res) => {
+        let body = '';
+        res.on('data', (chunk) => { body += chunk; });
+        res.on('end', () => {
+          try {
+            const parsed = JSON.parse(body);
+            resolve({ status_code: res.statusCode, ...parsed, triggered_at: now });
+          } catch {
+            resolve({ status_code: res.statusCode, raw: body, triggered_at: now });
+          }
+        });
+      });
+      req.on('error', (err) => reject(err));
+      req.write(payload);
+      req.end();
+    });
+
+    schedulerState.lastResult = result;
+    console.log(`[scheduler] Cycle #${schedulerState.cycleCount} completed — status ${result.status_code}`);
+    return result;
+  } catch (err) {
+    const result = { status: 'error', error: err.message, triggered_at: now };
+    schedulerState.lastResult = result;
+    console.error(`[scheduler] Cycle #${schedulerState.cycleCount} error:`, err.message);
+    return result;
+  }
+}
+
+function startScheduler() {
+  if (schedulerState.timer) return;
+  schedulerState.enabled = true;
+  schedulerState.timer = setInterval(() => {
+    runScheduledCycle().catch((err) => console.error('[scheduler] Unhandled error:', err.message));
+  }, schedulerState.intervalMs);
+  console.log(`[scheduler] Started — interval ${schedulerState.intervalMs}ms`);
+}
+
+function stopScheduler() {
+  if (schedulerState.timer) {
+    clearInterval(schedulerState.timer);
+    schedulerState.timer = null;
+  }
+  schedulerState.enabled = false;
+  console.log('[scheduler] Stopped');
+}
+
+// GET /v1/scheduler/status
+app.get('/v1/scheduler/status', (req, res) => {
+  res.json({
+    enabled: schedulerState.enabled,
+    interval_ms: schedulerState.intervalMs,
+    last_triggered_at: schedulerState.lastTriggeredAt,
+    last_result: schedulerState.lastResult,
+    cycle_count: schedulerState.cycleCount
+  });
+});
+
+// POST /v1/scheduler/control
+app.post('/v1/scheduler/control', (req, res) => {
+  const { enabled, interval_ms } = req.body || {};
+
+  if (typeof enabled !== 'boolean') {
+    return res.status(400).json({ error: { code: 'INVALID_PARAM', message: '`enabled` (boolean) is required' } });
+  }
+
+  if (interval_ms !== undefined) {
+    const parsed = parseInt(interval_ms, 10);
+    if (isNaN(parsed) || parsed < 5000) {
+      return res.status(400).json({ error: { code: 'INVALID_PARAM', message: '`interval_ms` must be >= 5000' } });
+    }
+    schedulerState.intervalMs = parsed;
+  }
+
+  if (enabled) {
+    // If interval changed while running, restart
+    if (schedulerState.timer) stopScheduler();
+    startScheduler();
+  } else {
+    stopScheduler();
+  }
+
+  res.json({
+    enabled: schedulerState.enabled,
+    interval_ms: schedulerState.intervalMs,
+    last_triggered_at: schedulerState.lastTriggeredAt,
+    cycle_count: schedulerState.cycleCount
+  });
+});
+
 // ==================== Start Server ====================
 
 app.listen(PORT, '127.0.0.1', () => {
@@ -1417,12 +1541,20 @@ app.listen(PORT, '127.0.0.1', () => {
   console.log('  GET  /v1/kill-switch');
   console.log('  POST /v1/kill-switch');
   console.log('  GET  /v1/devnet/smoke-runs');
+  console.log('  GET  /v1/scheduler/status');
+  console.log('  POST /v1/scheduler/control');
   console.log('  GET  /api/deploy/status');
   console.log('  POST /api/deploy/restart');
   console.log('  GET  /api/deploy/logs?lines=50');
   console.log('  GET  /api/deploy/kill-switch');
   console.log('  POST /api/deploy/kill-switch');
   console.log('  GET  /api/portfolio/summary');
+
+  // Auto-start scheduler if enabled via env var
+  if (process.env.SCHEDULER_ENABLED === 'true') {
+    console.log('[scheduler] Auto-starting (SCHEDULER_ENABLED=true)');
+    startScheduler();
+  }
 });
 SERVERJS
 

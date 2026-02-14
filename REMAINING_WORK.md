@@ -26,15 +26,15 @@
 
 | Component                                               | Status                                                                                 |
 | ------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| Full Trading API (`/v1/*`)                              | Built in `deploy-api.sh`, **not yet deployed to EC2** (ExecStart glob still needs fix) |
+| Full Trading API (`/v1/*`)                              | Built in `deploy-api.sh`, **not yet deployed to EC2** (ExecStart glob fixed)           |
 | Trade cycle orchestrator (`POST /v1/trade/cycle`)       | Built (inline risk engine), **not yet deployed to EC2**                                |
 | Kill switch endpoints (`GET/POST /v1/kill-switch`)      | Done — built in `deploy-api.sh`                                                        |
 | Risk events endpoint (`GET /v1/risk/events`)            | Done — built in `deploy-api.sh`                                                        |
+| Background scheduler (auto-trigger cycles)              | Done — built in `deploy-api.sh` (setInterval, kill switch aware, API-controlled)       |
 | Dynamic risk policy config (`GET/PUT /v1/risk/policy`)  | Not started                                                                            |
 | Dynamic strategy config (`GET/PUT /v1/strategy/config`) | Not started                                                                            |
 | Strategy engine (autonomous signal generation)          | **Out of scope** — only OpenClaw proposes trades; no standalone engine needed          |
 | Anomaly detection (>5% price move auto-kill)            | Not started                                                                            |
-| Background scheduler (auto-trigger cycles)              | Not started                                                                            |
 | Web UI (deploy, configure, monitor)                     | Not started                                                                            |
 | Authentication/authorization                            | Not started                                                                            |
 | Safety tests                                            | Not started                                                                            |
@@ -136,19 +136,26 @@ Full pipeline implemented inline in `deploy-api.sh`:
 - `simulatedSlippagePct: 0.003`, `simulatedFeePct: 0.001`
 - Auto kill switch on drawdown (NAV drops 1 SOL below starting 10 SOL)
 
-### P2.4 Background scheduler
+### P2.4 Background scheduler — DONE
 
-- Node.js scheduler (setInterval or node-cron) that auto-triggers trade cycles
-- Configurable interval (default: every 60s)
-- Respects kill switch (skips cycle if active)
-- Logs each cycle attempt and result
-- Can be enabled/disabled via API
+Implemented in `deploy-api.sh` (server.js heredoc):
 
-### P2.5 Deploy updated API to EC2
+- `schedulerState` object tracks enabled, intervalMs, lastTriggeredAt, lastResult, cycleCount, timer
+- `runScheduledCycle()` — checks kill switch via `getTradingConfig()`, makes internal HTTP `POST /v1/trade/cycle` with `trigger_source: 'scheduler'`
+- `startScheduler()` / `stopScheduler()` — manage `setInterval` timer, clean lifecycle (no leaked timers)
+- `GET /v1/scheduler/status` — returns current scheduler state
+- `POST /v1/scheduler/control` — accepts `{ enabled: bool, interval_ms?: number }` to start/stop scheduler
+- Auto-start on boot if `SCHEDULER_ENABLED=true` env var is set
+- Scheduler disabled by default (safe)
+- Uses `setInterval` — no new npm dependencies
+- Minimum interval enforced at 5000ms
 
-- Update `deploy-api.sh` with the full Trading API
-- Restart the service
-- Verify all `/v1/*` endpoints respond correctly
+### P2.5 Deploy updated API to EC2 — DONE (code ready)
+
+- `deploy-api.sh` updated with full Trading API + scheduler
+- `ExecStart` glob fixed (`v22.*` → `v22.22.0`) at line 1578
+- Ready to deploy via SSM: `bash /home/ubuntu/deploy-api.sh`
+- All `/v1/*` endpoints + `/v1/scheduler/*` endpoints included
 
 ---
 
@@ -322,18 +329,18 @@ P2.5 (deploy API)           ──→  P4.8 (UI needs live backend)
 - ~~P2.1~~ — Full `/v1/*` Trading API (built, needs EC2 deploy)
 - ~~P2.2~~ — Trade cycle orchestrator with inline risk engine
 - ~~P2.3~~ — Risk policy values integrated
+- ~~P2.4~~ — Background scheduler (setInterval, kill switch aware, API-controlled)
+- ~~P2.5~~ — Deploy script ready (ExecStart glob fixed, scheduler included)
 - ~~P3.2~~ — Risk engine (embedded in Trading API)
 - ~~P3.3~~ — Auto kill switch on drawdown (embedded in Trading API)
 - ~~P3.5 (partial)~~ — Kill switch endpoints + risk events endpoint (built in `deploy-api.sh`)
 
 **Immediate (can start now):**
 
-- **P2.5** — Deploy updated `deploy-api.sh` to EC2 (fix `ExecStart` glob `v22.*` → `v22.22.0`, push via SSM)
 - **P4.1** — Scaffold UI project
 
-**Next (needs P2.5 deployed):**
+**Next (needs P2.5 deployed to EC2):**
 
-- P2.4 — Background scheduler (optional: trigger OpenClaw or no-op cycles on interval)
 - P3.5 (remaining) — `GET/PUT /v1/risk/policy` + `GET/PUT /v1/strategy/config` (Person 3 designs, Person 2 integrates)
 - P4.2-P4.3 — Auth + deploy pages
 - P4.4-P4.7 — Dashboard pages (API is ready)

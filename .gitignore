@@ -1,0 +1,21 @@
+# Secrets and keys
+*.pem
+*.env
+.env*
+
+# Local install artifacts
+*.pkg
+*.deb
+
+# Node
+node_modules/
+
+# OS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+infra/openclaw-stack-params.json
+infra/solana-autopilot-params.json

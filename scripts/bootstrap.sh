@@ -33,7 +33,7 @@ echo "Region: $REGION"
 
 # ==================== Step 1: Update model to Opus 4.6 ====================
 echo ""
-echo "[1/5] Updating model to Claude Opus 4.6..."
+echo "[1/6] Updating model to Claude Opus 4.6..."
 
 # Backup current config
 cp "$CONFIG_FILE" "$CONFIG_FILE.backup.$(date +%s)"
@@ -81,7 +81,7 @@ fi
 
 # ==================== Step 2: Configure system prompt ====================
 echo ""
-echo "[2/5] Configuring Solana Autopilot system prompt..."
+echo "[2/6] Configuring Solana Autopilot system prompt..."
 
 mkdir -p "$HOME/clawd"
 cat > "$HOME/clawd/system.md" << 'SYSEOF'
@@ -117,9 +117,35 @@ SYSEOF
 
 echo "  System prompt written to $HOME/clawd/system.md"
 
+# ==================== Step 2.5: Install OpenClaw skills ====================
+echo ""
+echo "[3/6] Installing OpenClaw skills..."
+SKILLS_DIR="$CONFIG_DIR/skills"
+mkdir -p "$SKILLS_DIR"
+
+# Install solana-trader-v2 from playbooks (provides Jupiter price data + wallet queries)
+if command -v npx >/dev/null 2>&1; then
+  npx playbooks add skill openclaw/skills --skill solana-trader-v2
+  echo "  Installed: solana-trader-v2"
+else
+  echo "  WARNING: npx not found, skipping solana-trader-v2 install"
+fi
+
+# Install custom paper trading skills from repo
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+for skill in solana-paper-trader solana-risk-manager solana-portfolio solana-devnet-smoke; do
+  if [ -d "$SCRIPT_DIR/../skills/$skill" ]; then
+    cp -r "$SCRIPT_DIR/../skills/$skill" "$SKILLS_DIR/"
+    if [ -f "$SKILLS_DIR/$skill/package.json" ]; then
+      (cd "$SKILLS_DIR/$skill" && npm install --production 2>&1)
+    fi
+    echo "  Installed: $skill"
+  fi
+done
+
 # ==================== Step 3: Fetch trading config from Secrets Manager ====================
 echo ""
-echo "[3/5] Fetching trading configuration from Secrets Manager..."
+echo "[4/6] Fetching trading configuration from Secrets Manager..."
 
 # Try to get trading config (will fail gracefully if extended infra not yet deployed)
 TRADING_CONFIG=$(aws secretsmanager get-secret-value \
@@ -147,7 +173,7 @@ fi
 
 # ==================== Step 4: Fetch RDS connection info ====================
 echo ""
-echo "[4/5] Checking RDS connection info..."
+echo "[5/6] Checking RDS connection info..."
 
 DB_SECRET=$(aws secretsmanager get-secret-value \
   --secret-id "solana-autopilot-infra/db-credentials" \
@@ -165,7 +191,7 @@ fi
 
 # ==================== Step 5: Restart OpenClaw gateway ====================
 echo ""
-echo "[5/5] Restarting OpenClaw gateway..."
+echo "[6/6] Restarting OpenClaw gateway..."
 
 # Try both possible service names
 if XDG_RUNTIME_DIR=/run/user/1000 systemctl --user restart openclaw-gateway 2>/dev/null; then

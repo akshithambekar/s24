@@ -16,6 +16,7 @@ node_modules/
 # IDE
 .vscode/
 .idea/
+.claude/
 
 infra/openclaw-stack-params.json
 infra/solana-autopilot-params.json

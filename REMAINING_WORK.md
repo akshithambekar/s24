@@ -26,15 +26,15 @@
 
 | Component                                               | Status                                                                                 |
 | ------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| Full Trading API (`/v1/*`)                              | Built in `deploy-api.sh`, **not yet deployed to EC2** (ExecStart glob fixed)           |
-| Trade cycle orchestrator (`POST /v1/trade/cycle`)       | Built (inline risk engine), **not yet deployed to EC2**                                |
-| Kill switch endpoints (`GET/POST /v1/kill-switch`)      | Done — built in `deploy-api.sh`                                                        |
-| Risk events endpoint (`GET /v1/risk/events`)            | Done — built in `deploy-api.sh`                                                        |
-| Background scheduler (auto-trigger cycles)              | Done — built in `deploy-api.sh` (setInterval, kill switch aware, API-controlled)       |
-| Dynamic risk policy config (`GET/PUT /v1/risk/policy`)  | Not started                                                                            |
-| Dynamic strategy config (`GET/PUT /v1/strategy/config`) | Not started                                                                            |
+| Full Trading API (`/v1/*`)                              | **Deployed to EC2** (2026-02-14)                                                       |
+| Trade cycle orchestrator (`POST /v1/trade/cycle`)       | **Deployed to EC2** (inline risk engine, 2026-02-14)                                   |
+| Kill switch endpoints (`GET/POST /v1/kill-switch`)      | **Deployed to EC2**                                                                    |
+| Risk events endpoint (`GET /v1/risk/events`)            | **Deployed to EC2**                                                                    |
+| Background scheduler (auto-trigger cycles)              | **Deployed to EC2** (setInterval, kill switch aware, API-controlled)                   |
+| Dynamic risk policy config (`GET/PUT /v1/risk/policy`)  | **Deployed to EC2**                                                                    |
+| Dynamic strategy config (`GET/PUT /v1/strategy/config`) | **Deployed to EC2**                                                                    |
 | Strategy engine (autonomous signal generation)          | **Out of scope** — only OpenClaw proposes trades; no standalone engine needed          |
-| Anomaly detection (>5% price move auto-kill)            | Not started                                                                            |
+| Anomaly detection (>5% price move auto-kill)            | **Deployed to EC2** (`GET/POST /v1/risk/anomaly-detection`)                            |
 | Web UI (deploy, configure, monitor)                     | Not started                                                                            |
 | Authentication/authorization                            | Not started                                                                            |
 | Safety tests                                            | Not started                                                                            |
@@ -150,12 +150,12 @@ Implemented in `deploy-api.sh` (server.js heredoc):
 - Uses `setInterval` — no new npm dependencies
 - Minimum interval enforced at 5000ms
 
-### P2.5 Deploy updated API to EC2 — DONE (code ready)
+### P2.5 Deploy updated API to EC2 — DONE (deployed 2026-02-14)
 
-- `deploy-api.sh` updated with full Trading API + scheduler
-- `ExecStart` glob fixed (`v22.*` → `v22.22.0`) at line 1578
-- Ready to deploy via SSM: `bash /home/ubuntu/deploy-api.sh`
-- All `/v1/*` endpoints + `/v1/scheduler/*` endpoints included
+- `deploy-api.sh` deployed via SSM `send-command` (S3 presigned URL staging)
+- API confirmed listening on `:3001` (PID 29920)
+- All `/v1/*` endpoints + `/v1/scheduler/*` endpoints live
+- Includes risk/policy, strategy/config, and anomaly detection endpoints
 
 ---
 

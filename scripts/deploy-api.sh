@@ -2068,6 +2068,56 @@ app.post('/v1/scheduler/control', (req, res) => {
   });
 });
 
+// ==================== Market Data ====================
+
+app.get('/v1/market/ticks/recent', async (req, res) => {
+  const symbol = req.query.symbol || DEFAULT_SYMBOL;
+  const minutes = Math.min(Math.max(1, parseInt(req.query.minutes) || 5), 60);
+  try {
+    const pool = await getDbPool();
+    const result = await pool.query(
+      `SELECT symbol, mid_price, bid_price, ask_price, spread_bps, event_at
+       FROM market_ticks
+       WHERE symbol = $1
+         AND event_at >= NOW() - make_interval(secs => $2::int)
+       ORDER BY event_at ASC`,
+      [symbol, minutes * 60]
+    );
+    const ticks = result.rows;
+    let price_change_pct = 0;
+    let direction = 'flat';
+    if (ticks.length >= 2) {
+      const first = Number(ticks[0].mid_price);
+      const last = Number(ticks[ticks.length - 1].mid_price);
+      if (first > 0) {
+        price_change_pct = ((last - first) / first) * 100;
+        direction = price_change_pct > 0.1 ? 'up' : price_change_pct < -0.1 ? 'down' : 'flat';
+      }
+    }
+    const latest = ticks.length > 0 ? ticks[ticks.length - 1] : null;
+    return res.json({
+      symbol,
+      window_minutes: minutes,
+      tick_count: ticks.length,
+      latest_mid_price: latest ? Number(latest.mid_price) : null,
+      latest_bid: latest ? Number(latest.bid_price) : null,
+      latest_ask: latest ? Number(latest.ask_price) : null,
+      latest_at: latest?.event_at ? new Date(latest.event_at).toISOString() : null,
+      price_change_pct: Math.round(price_change_pct * 10000) / 10000,
+      direction,
+      ticks: ticks.map(t => ({
+        mid_price: Number(t.mid_price),
+        bid_price: Number(t.bid_price),
+        ask_price: Number(t.ask_price),
+        spread_bps: Number(t.spread_bps),
+        event_at: new Date(t.event_at).toISOString()
+      }))
+    });
+  } catch (err) {
+    return sendApiError(res, 500, 'INTERNAL_ERROR', 'Failed to fetch recent ticks', { reason: err.message });
+  }
+});
+
 // ==================== Start Server ====================
 
 app.listen(PORT, '127.0.0.1', () => {
@@ -2089,6 +2139,7 @@ app.listen(PORT, '127.0.0.1', () => {
   console.log('  POST /v1/risk/anomaly-detection/check');
   console.log('  GET  /v1/kill-switch');
   console.log('  POST /v1/kill-switch');
+  console.log('  GET  /v1/market/ticks/recent?symbol=SOL-USDC&minutes=5');
   console.log('  GET  /v1/devnet/smoke-runs');
   console.log('  GET  /v1/scheduler/status');
   console.log('  POST /v1/scheduler/control');
@@ -2138,7 +2189,7 @@ SVCEOF
 # Enable and start
 XDG_RUNTIME_DIR=/run/user/1000 systemctl --user daemon-reload
 XDG_RUNTIME_DIR=/run/user/1000 systemctl --user enable autopilot-api
-XDG_RUNTIME_DIR=/run/user/1000 systemctl --user start autopilot-api
+XDG_RUNTIME_DIR=/run/user/1000 systemctl --user restart autopilot-api
 
 sleep 2
 echo "API Status:"

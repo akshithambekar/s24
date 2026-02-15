@@ -1,5 +1,5 @@
 -- Trading API database schema
--- Aligned with migrations: 001_init_tables.sql + 002_add_indexes.sql
+-- Aligned with migrations: 001_init_tables.sql + 002_add_indexes.sql + 003_add_devnet_execution.sql
 
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 
@@ -37,10 +37,12 @@ CREATE TABLE IF NOT EXISTS orders (
     limit_price NUMERIC(18,8),
     status TEXT NOT NULL,
     risk_reason TEXT,
+    execution_mode TEXT DEFAULT 'paper',
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     CONSTRAINT orders_side_check CHECK (side IN ('buy', 'sell')),
     CONSTRAINT orders_status_check CHECK (status IN ('proposed', 'approved', 'rejected', 'executed', 'canceled')),
-    CONSTRAINT orders_qty_check CHECK (qty > 0)
+    CONSTRAINT orders_qty_check CHECK (qty > 0),
+    CONSTRAINT orders_execution_mode_check CHECK (execution_mode IN ('paper', 'devnet', 'live'))
 );
 
 CREATE TABLE IF NOT EXISTS fills (
@@ -53,9 +55,14 @@ CREATE TABLE IF NOT EXISTS fills (
     fee NUMERIC(18,8) NOT NULL DEFAULT 0,
     slippage_bps INTEGER NOT NULL DEFAULT 0,
     filled_at TIMESTAMPTZ NOT NULL,
+    execution_mode TEXT DEFAULT 'paper',
+    tx_signature TEXT,
+    tx_slot BIGINT,
+    network_fee_sol NUMERIC(18,8),
     CONSTRAINT fills_side_check CHECK (side IN ('buy', 'sell')),
     CONSTRAINT fills_qty_check CHECK (qty > 0),
-    CONSTRAINT fills_slippage_check CHECK (slippage_bps >= 0)
+    CONSTRAINT fills_slippage_check CHECK (slippage_bps >= 0),
+    CONSTRAINT fills_execution_mode_check CHECK (execution_mode IN ('paper', 'devnet', 'live'))
 );
 
 CREATE TABLE IF NOT EXISTS positions (
@@ -127,6 +134,13 @@ CREATE INDEX IF NOT EXISTS idx_fills_order_id_filled_at
 
 CREATE INDEX IF NOT EXISTS idx_fills_symbol_filled_at
     ON fills (symbol, filled_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_fills_execution_mode_filled_at
+    ON fills (execution_mode, filled_at DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_fills_tx_signature
+    ON fills (tx_signature)
+    WHERE tx_signature IS NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_portfolio_snapshots_captured_at
     ON portfolio_snapshots (captured_at DESC);

@@ -1,4 +1,5 @@
 # Solana Autopilot on OpenClaw (AWS Bedrock) - Project Specification
+### Developed by: Akshith, Abhi, Tuga, Yahya
 
 ## 1. Product Idea
 Build a user-facing app where each user can deploy their own OpenClaw instance on AWS, connect strategy settings, and run an autonomous Solana trading bot in paper mode.

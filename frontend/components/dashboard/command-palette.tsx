@@ -17,8 +17,6 @@ import {
   LayoutDashboard,
   ArrowLeftRight,
   ShieldCheck,
-  HeartPulse,
-  ScrollText,
 } from "lucide-react"
 import type { NavSection } from "./sidebar-nav"
 
@@ -90,14 +88,6 @@ export function CommandPalette({
           <CommandItem onSelect={() => run(() => onNavigate("risk"))}>
             <ShieldCheck className="mr-2 h-4 w-4" />
             <span>Risk & Strategy</span>
-          </CommandItem>
-          <CommandItem onSelect={() => run(() => onNavigate("system"))}>
-            <HeartPulse className="mr-2 h-4 w-4" />
-            <span>System Health</span>
-          </CommandItem>
-          <CommandItem onSelect={() => run(() => onNavigate("logs"))}>
-            <ScrollText className="mr-2 h-4 w-4" />
-            <span>Logs</span>
           </CommandItem>
         </CommandGroup>
       </CommandList>

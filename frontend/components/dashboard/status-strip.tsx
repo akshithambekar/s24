@@ -1,43 +1,38 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { useBotStatus, useKillSwitch, useHealth } from "@/hooks/use-api"
 import { useGatewayHealth as useOcHealth } from "@/hooks/use-openclaw"
 import { cn } from "@/lib/utils"
 import { Activity, ShieldAlert, Database, Bot, Clock } from "lucide-react"
 
-export function StatusStrip() {
+interface StatusStripProps {
+  title?: string
+  actions?: React.ReactNode
+}
+
+export function StatusStrip({ title, actions }: StatusStripProps) {
   const { data: bot } = useBotStatus()
   const { data: killSwitch } = useKillSwitch()
   const { data: health } = useHealth()
   const { data: ocHealth } = useOcHealth()
-  const [logoError, setLogoError] = useState(false)
+  const [now, setNow] = useState(new Date())
+
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 1000)
+    return () => clearInterval(id)
+  }, [])
 
   return (
     <header className="flex items-center justify-between border-b border-border bg-card/60 px-4 py-2 backdrop-blur-sm">
-      <div className="flex items-center gap-2">
-        <div className="brand-logo-wrap" aria-hidden="true">
-          {!logoError ? (
-            <img
-              src="/s24-crab-logo.png"
-              alt="s24 logo"
-              className="brand-logo-img"
-              onError={() => setLogoError(true)}
-            />
-          ) : (
-            <div className="brand-logo-fallback">s24</div>
-          )}
-        </div>
-        <div className="flex flex-col leading-none">
-          <span className="text-xs font-bold uppercase tracking-widest text-primary">
-            s24
-          </span>
-          <span className="mt-0.5 text-[10px] text-muted-foreground">
-            {bot?.mode ? bot.mode.toUpperCase() : ""}
-          </span>
-        </div>
+      <div className="flex items-center gap-3">
+        {title && (
+          <h1 className="text-sm font-bold uppercase tracking-wider text-foreground">
+            {title}
+          </h1>
+        )}
+        {actions}
       </div>
-
       <div className="flex items-center gap-4 text-xs">
         {/* Bot state */}
         <div className="flex items-center gap-1.5">
@@ -111,7 +106,7 @@ export function StatusStrip() {
         <div className="hidden items-center gap-1.5 md:flex">
           <Clock className="h-3 w-3 text-muted-foreground" />
           <span className="text-muted-foreground">
-            {new Date().toLocaleTimeString()}
+            {now.toLocaleTimeString()}
           </span>
         </div>
       </div>

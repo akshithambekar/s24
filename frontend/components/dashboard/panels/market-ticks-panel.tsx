@@ -41,7 +41,7 @@ export function MarketTicksPanel() {
       {!lastTick ? (
         <EmptyState message="No market data available. Ticks appear once the market feed is active." />
       ) : (
-        <div className="flex flex-col gap-3">
+        <div className="flex h-full flex-col gap-3">
           <div className="flex items-center gap-4 text-xs">
             <div>
               <span className="text-muted-foreground">Bid: </span>
@@ -77,7 +77,7 @@ export function MarketTicksPanel() {
           </div>
 
           {chartData.length > 1 && (
-            <div className="h-32 w-full">
+            <div className="min-h-[200px] w-full flex-1">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={chartData}>
                   <XAxis
@@ -91,7 +91,7 @@ export function MarketTicksPanel() {
                     tickLine={false}
                     axisLine={false}
                     domain={["auto", "auto"]}
-                    tickFormatter={(v: number) => `$${v.toFixed(0)}`}
+                    tickFormatter={(v: number) => `$${v.toFixed(2)}`}
                   />
                   <Tooltip
                     contentStyle={{

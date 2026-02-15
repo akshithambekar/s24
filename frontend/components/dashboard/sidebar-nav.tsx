@@ -6,13 +6,9 @@ import {
   ArrowLeftRight,
   History,
   ShieldCheck,
-  HeartPulse,
-  ScrollText,
-  ChevronLeft,
-  ChevronRight,
+  PanelLeft,
 } from "lucide-react"
 import { useState } from "react"
-import { Button } from "@/components/ui/button"
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip"
 
 const NAV_ITEMS = [
@@ -20,8 +16,6 @@ const NAV_ITEMS = [
   { id: "trading", label: "Trading", icon: ArrowLeftRight },
   { id: "history", label: "Order History", icon: History },
   { id: "risk", label: "Risk & Strategy", icon: ShieldCheck },
-  { id: "system", label: "System Health", icon: HeartPulse },
-  { id: "logs", label: "Logs", icon: ScrollText },
 ] as const
 
 export type NavSection = (typeof NAV_ITEMS)[number]["id"]
@@ -33,6 +27,17 @@ interface SidebarNavProps {
 
 export function SidebarNav({ active, onChange }: SidebarNavProps) {
   const [collapsed, setCollapsed] = useState(false)
+  const [logoHovered, setLogoHovered] = useState(false)
+
+  function collapse() {
+    setLogoHovered(false)
+    setCollapsed(true)
+  }
+
+  function expand() {
+    setLogoHovered(false)
+    setCollapsed(false)
+  }
 
   return (
     <TooltipProvider delayDuration={0}>
@@ -42,6 +47,53 @@ export function SidebarNav({ active, onChange }: SidebarNavProps) {
           collapsed ? "w-14" : "w-48"
         )}
       >
+        {/* Logo + toggle */}
+        <div className={cn("flex items-center py-2.5", collapsed ? "justify-center px-2" : "justify-between px-2.5")}>
+          <div className="flex items-center gap-2">
+            {collapsed ? (
+              <button
+                onClick={expand}
+                onMouseEnter={() => setLogoHovered(true)}
+                onMouseLeave={() => setLogoHovered(false)}
+                className="flex h-7 w-7 items-center justify-center"
+              >
+                {logoHovered ? (
+                  <PanelLeft className="h-4 w-4 text-foreground" />
+                ) : (
+                  <div className="brand-logo-wrap">
+                    <img
+                      src="/s24-crab-logo.png"
+                      alt="s24 logo"
+                      className="brand-logo-img"
+                    />
+                  </div>
+                )}
+              </button>
+            ) : (
+              <>
+                <div className="brand-logo-wrap flex-shrink-0" aria-hidden="true">
+                  <img
+                    src="/s24-crab-logo.png"
+                    alt="s24 logo"
+                    className="brand-logo-img"
+                  />
+                </div>
+                <span className="text-xs font-bold uppercase tracking-widest text-primary">
+                  s24
+                </span>
+              </>
+            )}
+          </div>
+          {!collapsed && (
+            <button
+              onClick={collapse}
+              className="text-muted-foreground hover:text-foreground"
+            >
+              <PanelLeft className="h-4 w-4" />
+            </button>
+          )}
+        </div>
+
         <div className="flex flex-1 flex-col gap-1 px-2 py-3">
           {NAV_ITEMS.map((item) => {
             const Icon = item.icon
@@ -72,20 +124,6 @@ export function SidebarNav({ active, onChange }: SidebarNavProps) {
           })}
         </div>
 
-        <div className="border-t border-border px-2 py-2">
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={() => setCollapsed(!collapsed)}
-            className="w-full justify-center text-muted-foreground hover:text-foreground"
-          >
-            {collapsed ? (
-              <ChevronRight className="h-4 w-4" />
-            ) : (
-              <ChevronLeft className="h-4 w-4" />
-            )}
-          </Button>
-        </div>
       </nav>
     </TooltipProvider>
   )

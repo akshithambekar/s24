@@ -6,7 +6,6 @@ import { Panel, EmptyState } from "../panel"
 import { ClipboardList, ChevronLeft, ChevronRight } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { format } from "date-fns"
-import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import type { OrderFilters } from "@/types/api"
 
@@ -33,8 +32,6 @@ export function OrdersPanel({
   emptyMessage,
 }: OrdersPanelProps) {
   const [filters, setFilters] = useState<OrderFilters>({})
-  const [symbolInput, setSymbolInput] = useState("")
-  const [statusInput, setStatusInput] = useState("")
   const hasRequiredSession = scope !== "current" || Boolean(sessionStartedAt)
 
   const effectiveFilters = useMemo<OrderFilters>(() => {
@@ -69,15 +66,6 @@ export function OrdersPanel({
     setFilters((prev) => ({ ...prev, cursor: undefined }))
   }, [scope, sessionStartedAt])
 
-  function applyFilters() {
-    setFilters({
-      ...filters,
-      symbol: symbolInput || undefined,
-      status: statusInput || undefined,
-      cursor: undefined,
-    })
-  }
-
   function nextPage() {
     if (data?.next_cursor) {
       setFilters({ ...filters, cursor: data.next_cursor })
@@ -94,30 +82,6 @@ export function OrdersPanel({
       icon={<ClipboardList className="h-3.5 w-3.5" />}
       isLoading={isLoading}
       isError={isError}
-      actions={
-        <div className="flex items-center gap-2">
-          <Input
-            placeholder="Symbol"
-            value={symbolInput}
-            onChange={(e) => setSymbolInput(e.target.value)}
-            className="h-6 w-24 text-xs"
-          />
-          <Input
-            placeholder="Status"
-            value={statusInput}
-            onChange={(e) => setStatusInput(e.target.value)}
-            className="h-6 w-20 text-xs"
-          />
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={applyFilters}
-            className="h-6 text-xs"
-          >
-            Filter
-          </Button>
-        </div>
-      }
     >
       {!orders.length ? (
         <EmptyState message={resolvedEmptyMessage} />
@@ -127,12 +91,12 @@ export function OrdersPanel({
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-border text-left text-muted-foreground">
-                  <th className="pb-2 pr-3 font-semibold">Time</th>
-                  <th className="pb-2 pr-3 font-semibold">Symbol</th>
-                  <th className="pb-2 pr-3 font-semibold">Side</th>
-                  <th className="pb-2 pr-3 font-semibold text-right">Qty</th>
-                  <th className="pb-2 pr-3 font-semibold">Status</th>
-                  <th className="pb-2 font-semibold">Risk Reason</th>
+                  <th className="py-2 pr-3 font-semibold">Time</th>
+                  <th className="py-2 pr-3 font-semibold">Symbol</th>
+                  <th className="py-2 pr-3 font-semibold">Side</th>
+                  <th className="py-2 pr-3 font-semibold text-right">Qty</th>
+                  <th className="py-2 pr-3 font-semibold">Status</th>
+                  <th className="py-2 font-semibold">Risk Reason</th>
                 </tr>
               </thead>
               <tbody>
@@ -183,28 +147,30 @@ export function OrdersPanel({
               </tbody>
             </table>
           </div>
-          <div className="mt-3 flex items-center justify-end gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={prevPage}
-              disabled={!filters.cursor}
-              className="h-6 text-xs"
-            >
-              <ChevronLeft className="mr-1 h-3 w-3" />
-              Prev
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={nextPage}
-              disabled={!data?.next_cursor}
-              className="h-6 text-xs"
-            >
-              Next
-              <ChevronRight className="ml-1 h-3 w-3" />
-            </Button>
-          </div>
+          {(filters.cursor || data?.next_cursor) && (
+            <div className="mt-3 flex items-center justify-end gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={prevPage}
+                disabled={!filters.cursor}
+                className="h-6 text-xs"
+              >
+                <ChevronLeft className="mr-1 h-3 w-3" />
+                Prev
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={nextPage}
+                disabled={!data?.next_cursor}
+                className="h-6 text-xs"
+              >
+                Next
+                <ChevronRight className="ml-1 h-3 w-3" />
+              </Button>
+            </div>
+          )}
         </>
       )}
     </Panel>

@@ -11,8 +11,6 @@ import { DashboardSection } from "./sections/dashboard-section"
 import { TradingSection } from "./sections/trading-section"
 import { OrderHistorySection } from "./sections/order-history-section"
 import { RiskSection } from "./sections/risk-section"
-import { SystemSection } from "./sections/system-section"
-import { LogsSection } from "./sections/logs-section"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
 import { Command } from "lucide-react"
@@ -24,8 +22,6 @@ const SECTION_TITLES: Record<NavSection, string> = {
   trading: "Trading Control",
   history: "Order History",
   risk: "Risk & Strategy",
-  system: "System Health",
-  logs: "Logs",
 }
 
 export function DashboardShell() {
@@ -58,25 +54,19 @@ export function DashboardShell() {
   }, [])
 
   return (
-    <div className="flex h-screen flex-col overflow-hidden">
-      <KillSwitchBanner />
-      <StatusStrip />
+    <div className="flex h-screen overflow-hidden">
+      <SidebarNav active={section} onChange={setSection} />
 
-      <div className="flex flex-1 overflow-hidden">
-        <SidebarNav active={section} onChange={setSection} />
-
-        <main className="flex flex-1 flex-col overflow-hidden">
-          {/* Section header */}
-          <div className="flex items-center justify-between border-b border-border px-6 py-3">
-            <h1 className="text-sm font-bold uppercase tracking-wider text-foreground">
-              {SECTION_TITLES[section]}
-            </h1>
+      <div className="flex flex-1 flex-col overflow-hidden">
+        <KillSwitchBanner />
+        <StatusStrip
+          title={SECTION_TITLES[section]}
+          actions={
             <Button
               variant="outline"
               size="sm"
-              className="hidden h-7 gap-1.5 text-xs text-muted-foreground sm:flex"
+              className="hidden h-6 gap-1.5 text-xs text-muted-foreground sm:flex"
               onClick={() => {
-                // Dispatch keyboard shortcut to open command palette
                 document.dispatchEvent(
                   new KeyboardEvent("keydown", {
                     key: "k",
@@ -85,14 +75,16 @@ export function DashboardShell() {
                 )
               }}
             >
-              <Command className="h-3 w-3" />
               <span>Quick Actions</span>
-              <kbd className="pointer-events-none ml-1 inline-flex h-4 items-center rounded border border-border bg-secondary px-1 font-mono text-[10px] text-muted-foreground">
-                {"K"}
+              <Command className="ml-1 h-2.5 w-2.5 text-muted-foreground" />
+              <kbd className="pointer-events-none inline-flex h-4 items-center rounded border border-border bg-secondary px-1 font-mono text-[10px] text-muted-foreground">
+                K
               </kbd>
             </Button>
-          </div>
+          }
+        />
 
+        <main className="flex flex-1 flex-col overflow-hidden">
           {/* Content */}
           <ScrollArea className="flex-1">
             <div className="p-6">
@@ -100,8 +92,6 @@ export function DashboardShell() {
               {section === "trading" && <TradingSection />}
               {section === "history" && <OrderHistorySection />}
               {section === "risk" && <RiskSection />}
-              {section === "system" && <SystemSection />}
-              {section === "logs" && <LogsSection />}
             </div>
           </ScrollArea>
         </main>

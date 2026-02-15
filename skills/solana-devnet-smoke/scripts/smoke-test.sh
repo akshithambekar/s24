@@ -30,6 +30,24 @@ SLOT_RESPONSE=$(curl -s -X POST -H "Content-Type: application/json" \
 
 SLOT=$(echo "$SLOT_RESPONSE" | jq -r '.result // empty')
 
+# ------- 2b. Wallet balance check via API ------------------------------------
+
+WALLET_CHECK="skipped"
+API_URL="${API_URL:-http://127.0.0.1:3001}"
+WALLET_RESPONSE=$(curl -s "${API_URL}/v1/devnet/wallet" 2>/dev/null || echo "")
+if [[ -n "$WALLET_RESPONSE" ]]; then
+  WALLET_ENABLED=$(echo "$WALLET_RESPONSE" | jq -r '.enabled // false')
+  if [[ "$WALLET_ENABLED" == "true" ]]; then
+    WALLET_BALANCE=$(echo "$WALLET_RESPONSE" | jq -r '.balance_sol // 0')
+    WALLET_HEALTHY=$(echo "$WALLET_RESPONSE" | jq -r '.healthy // false')
+    if [[ "$WALLET_HEALTHY" == "true" ]] && [[ $(echo "$WALLET_BALANCE > 0" | bc -l 2>/dev/null || echo "0") == "1" ]]; then
+      WALLET_CHECK="passed"
+    else
+      WALLET_CHECK="failed"
+    fi
+  fi
+fi
+
 # ------- 3. Determine status ------------------------------------------------
 
 if [[ "$HEALTH_RESULT" == "ok" ]] && [[ -n "$SLOT" ]] && [[ "$SLOT" -gt 0 ]] 2>/dev/null; then
@@ -52,7 +70,7 @@ if [[ -f "$CREDS_FILE" ]]; then
 
   PGPASSWORD="$DB_PASS" psql -h "$DB_HOST" -p "$DB_PORT" -U "$DB_USER" -d "$DB_NAME" -c \
     "INSERT INTO devnet_smoke_runs (run_id, status, rpc_latency_ms, wallet_check, tx_simulation, ran_at)
-     VALUES (gen_random_uuid(), '$STATUS', $RPC_LATENCY_MS, 'skipped', 'skipped', NOW());"
+     VALUES (gen_random_uuid(), '$STATUS', $RPC_LATENCY_MS, '$WALLET_CHECK', 'skipped', NOW());"
 else
   echo "WARNING: $CREDS_FILE not found — skipping database insert." >&2
 fi
@@ -66,6 +84,7 @@ cat <<EOF
   "status": "$STATUS",
   "rpc_latency_ms": $RPC_LATENCY_MS,
   "slot": $SLOT,
+  "wallet_check": "$WALLET_CHECK",
   "rpc_url": "$RPC_URL",
   "ran_at": "$RAN_AT"
 }

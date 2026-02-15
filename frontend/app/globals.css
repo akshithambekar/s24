@@ -91,17 +91,6 @@
   animation: pulse-glow 2s ease-in-out infinite;
 }
 
-@keyframes brand-logo-float {
-  0%, 100% { transform: translateY(0px); }
-  50% { transform: translateY(-2px); }
-}
-
-@keyframes brand-coin-fall {
-  0% { transform: translateY(-6px); opacity: 0; }
-  30% { opacity: 1; }
-  100% { transform: translateY(14px); opacity: 0; }
-}
-
 .brand-logo-wrap {
   position: relative;
   width: 28px;
@@ -111,7 +100,6 @@
   background: radial-gradient(circle at 30% 25%, hsl(0 92% 62%), hsl(0 70% 46%));
   box-shadow: 0 0 14px hsl(var(--primary) / 0.3);
   overflow: hidden;
-  animation: brand-logo-float 2.2s ease-in-out infinite;
 }
 
 .brand-logo-img {
@@ -131,33 +119,6 @@
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: hsl(var(--foreground));
-}
-
-.brand-coin {
-  position: absolute;
-  width: 5px;
-  height: 5px;
-  border-radius: 9999px;
-  background: hsl(45 96% 62%);
-  box-shadow: 0 0 8px hsl(45 96% 62% / 0.65);
-  z-index: 2;
-  pointer-events: none;
-  animation: brand-coin-fall 1.8s linear infinite;
-}
-
-.brand-coin-a {
-  left: 3px;
-  animation-delay: 0s;
-}
-
-.brand-coin-b {
-  left: 11px;
-  animation-delay: 0.45s;
-}
-
-.brand-coin-c {
-  left: 19px;
-  animation-delay: 0.9s;
 }
 
 /* custom scrollbar */

@@ -15,9 +15,6 @@ export function StatusStrip() {
     <header className="flex items-center justify-between border-b border-border bg-card/60 px-4 py-2 backdrop-blur-sm">
       <div className="flex items-center gap-2">
         <div className="brand-logo-wrap" aria-hidden="true">
-          <span className="brand-coin brand-coin-a" />
-          <span className="brand-coin brand-coin-b" />
-          <span className="brand-coin brand-coin-c" />
           {!logoError ? (
             <img
               src="/s24-crab-logo.png"

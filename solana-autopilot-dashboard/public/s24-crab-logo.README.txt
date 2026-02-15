@@ -1,0 +1,6 @@
+Place your logo image here as:
+
+public/s24-crab-logo.png
+
+Recommended size: 256x256 (square), PNG, transparent or dark background.
+The header animation in status-strip will load this file automatically.

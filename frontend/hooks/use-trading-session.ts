@@ -1,12 +1,17 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useState } from "react"
+import type {
+  TradePreviewMessage,
+  TradePreviewMessagePhase,
+} from "@/types/openclaw"
 
 export type TradingSessionStatus = "idle" | "starting" | "started" | "error"
 
 type PersistedTradingSession = {
   isActive: boolean
   startedAt: string | null
+  previewMessages: TradePreviewMessage[]
 }
 
 type TradingSessionState = PersistedTradingSession & {
@@ -20,6 +25,32 @@ const EVENT_NAME = "s24:trading-session:update"
 const EMPTY_PERSISTED: PersistedTradingSession = {
   isActive: false,
   startedAt: null,
+  previewMessages: [],
+}
+
+type AppendTradePreviewMessageInput = {
+  id?: string
+  role: TradePreviewMessage["role"]
+  text: string
+  ts?: string
+  phase?: TradePreviewMessagePhase
+}
+
+function isTradePreviewMessage(value: unknown): value is TradePreviewMessage {
+  if (!value || typeof value !== "object") return false
+  const v = value as Partial<TradePreviewMessage>
+  return (
+    typeof v.id === "string"
+    && (v.role === "user" || v.role === "assistant" || v.role === "system")
+    && typeof v.text === "string"
+    && typeof v.ts === "string"
+    && (
+      v.phase === "pending"
+      || v.phase === "streaming"
+      || v.phase === "completed"
+      || v.phase === "error"
+    )
+  )
 }
 
 function readPersistedSession(): PersistedTradingSession {
@@ -34,8 +65,15 @@ function readPersistedSession(): PersistedTradingSession {
       typeof parsed.startedAt === "string" && !Number.isNaN(Date.parse(parsed.startedAt))
         ? parsed.startedAt
         : null
+    const previewMessages = Array.isArray(parsed.previewMessages)
+      ? parsed.previewMessages.filter(isTradePreviewMessage)
+      : []
     const isActive = parsed.isActive === true && Boolean(startedAt)
-    return { isActive, startedAt: isActive ? startedAt : null }
+    return {
+      isActive,
+      startedAt: isActive ? startedAt : null,
+      previewMessages: isActive ? previewMessages : [],
+    }
   } catch {
     return EMPTY_PERSISTED
   }
@@ -46,6 +84,7 @@ function stateFromPersisted(session: PersistedTradingSession): TradingSessionSta
     return {
       isActive: true,
       startedAt: session.startedAt,
+      previewMessages: session.previewMessages,
       status: "started",
       errorMessage: null,
     }
@@ -54,6 +93,7 @@ function stateFromPersisted(session: PersistedTradingSession): TradingSessionSta
   return {
     isActive: false,
     startedAt: null,
+    previewMessages: [],
     status: "idle",
     errorMessage: null,
   }
@@ -68,7 +108,12 @@ function writePersistedSession(session: PersistedTradingSession) {
     window.localStorage.removeItem(STORAGE_KEY)
   }
 
-  window.dispatchEvent(new Event(EVENT_NAME))
+  const dispatchSync = () => window.dispatchEvent(new Event(EVENT_NAME))
+  if (typeof queueMicrotask === "function") {
+    queueMicrotask(dispatchSync)
+  } else {
+    window.setTimeout(dispatchSync, 0)
+  }
 }
 
 export function useTradingSession() {
@@ -87,6 +132,17 @@ export function useTradingSession() {
       const unchanged =
         prev.isActive === next.isActive
         && prev.startedAt === next.startedAt
+        && prev.previewMessages.length === next.previewMessages.length
+        && prev.previewMessages.every((message, index) => {
+          const nextMessage = next.previewMessages[index]
+          return (
+            message.id === nextMessage?.id
+            && message.text === nextMessage?.text
+            && message.role === nextMessage?.role
+            && message.ts === nextMessage?.ts
+            && message.phase === nextMessage?.phase
+          )
+        })
         && prev.status === next.status
         && prev.errorMessage === next.errorMessage
       return unchanged ? prev : next
@@ -114,6 +170,7 @@ export function useTradingSession() {
     setState({
       isActive: false,
       startedAt: null,
+      previewMessages: [],
       status: "starting",
       errorMessage: null,
     })
@@ -123,31 +180,37 @@ export function useTradingSession() {
     setState({
       isActive: false,
       startedAt: null,
+      previewMessages: [],
       status: "idle",
       errorMessage: null,
     })
   }, [])
 
   const setError = useCallback((message?: string) => {
-    setState({
+    setState((prev) => ({
       isActive: false,
       startedAt: null,
+      previewMessages: prev.previewMessages,
       status: "error",
       errorMessage: message ?? "Failed to start trading session",
-    })
+    }))
   }, [])
 
   const startSession = useCallback((startedAtIso: string) => {
-    const persisted: PersistedTradingSession = {
-      isActive: true,
-      startedAt: startedAtIso,
-    }
-    writePersistedSession(persisted)
-    setState({
-      isActive: true,
-      startedAt: startedAtIso,
-      status: "started",
-      errorMessage: null,
+    setState((prev) => {
+      const persisted: PersistedTradingSession = {
+        isActive: true,
+        startedAt: startedAtIso,
+        previewMessages: prev.previewMessages,
+      }
+      writePersistedSession(persisted)
+      return {
+        isActive: true,
+        startedAt: startedAtIso,
+        previewMessages: prev.previewMessages,
+        status: "started",
+        errorMessage: null,
+      }
     })
   }, [])
 
@@ -156,8 +219,110 @@ export function useTradingSession() {
     setState({
       isActive: false,
       startedAt: null,
+      previewMessages: [],
       status: "idle",
       errorMessage: null,
+    })
+  }, [])
+
+  const clearPreviewMessages = useCallback(() => {
+    setState((prev) => {
+      if (!prev.previewMessages.length) return prev
+
+      if (prev.isActive && prev.startedAt) {
+        writePersistedSession({
+          isActive: true,
+          startedAt: prev.startedAt,
+          previewMessages: [],
+        })
+      }
+
+      return {
+        ...prev,
+        previewMessages: [],
+      }
+    })
+  }, [])
+
+  const appendPreviewMessage = useCallback((message: AppendTradePreviewMessageInput) => {
+    setState((prev) => {
+      const nextMessage: TradePreviewMessage = {
+        id: message.id ?? crypto.randomUUID(),
+        role: message.role,
+        text: message.text,
+        ts: message.ts ?? new Date().toISOString(),
+        phase: message.phase ?? "completed",
+      }
+      const nextPreviewMessages = [...prev.previewMessages, nextMessage]
+
+      if (prev.isActive && prev.startedAt) {
+        writePersistedSession({
+          isActive: true,
+          startedAt: prev.startedAt,
+          previewMessages: nextPreviewMessages,
+        })
+      }
+
+      return {
+        ...prev,
+        previewMessages: nextPreviewMessages,
+      }
+    })
+  }, [])
+
+  const appendPreviewMessageText = useCallback((
+    id: string,
+    textChunk: string,
+    phase: TradePreviewMessagePhase = "streaming"
+  ) => {
+    if (!textChunk) return
+
+    setState((prev) => {
+      const nextPreviewMessages = prev.previewMessages.map((message) =>
+        message.id === id
+          ? {
+            ...message,
+            text: `${message.text}${textChunk}`,
+            phase,
+          }
+          : message
+      )
+
+      if (prev.isActive && prev.startedAt) {
+        writePersistedSession({
+          isActive: true,
+          startedAt: prev.startedAt,
+          previewMessages: nextPreviewMessages,
+        })
+      }
+
+      return {
+        ...prev,
+        previewMessages: nextPreviewMessages,
+      }
+    })
+  }, [])
+
+  const setPreviewMessagePhase = useCallback((id: string, phase: TradePreviewMessagePhase) => {
+    setState((prev) => {
+      const nextPreviewMessages = prev.previewMessages.map((message) =>
+        message.id === id
+          ? { ...message, phase }
+          : message
+      )
+
+      if (prev.isActive && prev.startedAt) {
+        writePersistedSession({
+          isActive: true,
+          startedAt: prev.startedAt,
+          previewMessages: nextPreviewMessages,
+        })
+      }
+
+      return {
+        ...prev,
+        previewMessages: nextPreviewMessages,
+      }
     })
   }, [])
 
@@ -169,7 +334,22 @@ export function useTradingSession() {
       setError,
       startSession,
       endSession,
+      clearPreviewMessages,
+      appendPreviewMessage,
+      appendPreviewMessageText,
+      setPreviewMessagePhase,
     }),
-    [state, setStarting, setIdle, setError, startSession, endSession]
+    [
+      state,
+      setStarting,
+      setIdle,
+      setError,
+      startSession,
+      endSession,
+      clearPreviewMessages,
+      appendPreviewMessage,
+      appendPreviewMessageText,
+      setPreviewMessagePhase,
+    ]
   )
 }

@@ -109,3 +109,41 @@ export interface SendAgentMessagePayload {
   idempotencyKey?: string
   expectFinal?: boolean
 }
+
+export type TradePreviewMessagePhase =
+  | "pending"
+  | "streaming"
+  | "completed"
+  | "error"
+
+export interface TradePreviewMessage {
+  id: string
+  role: "user" | "assistant" | "system"
+  text: string
+  ts: string
+  phase: TradePreviewMessagePhase
+}
+
+export type ResponsesStreamState =
+  | "idle"
+  | "starting"
+  | "streaming"
+  | "done"
+  | "error"
+  | "aborted"
+
+export type ResponsesEventPhase =
+  | "started"
+  | "delta"
+  | "completed"
+  | "error"
+
+export interface ResponsesStreamEvent {
+  id: string
+  streamId: string
+  phase: ResponsesEventPhase
+  ts: number
+  text?: string
+  raw?: unknown
+  error?: string
+}

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useCallback } from "react"
+import { useState, useCallback, useEffect } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { toast } from "sonner"
 import { SidebarNav, type NavSection } from "./sidebar-nav"
@@ -9,16 +9,20 @@ import { KillSwitchBanner } from "./kill-switch-banner"
 import { CommandPalette } from "./command-palette"
 import { DashboardSection } from "./sections/dashboard-section"
 import { TradingSection } from "./sections/trading-section"
+import { OrderHistorySection } from "./sections/order-history-section"
 import { RiskSection } from "./sections/risk-section"
 import { SystemSection } from "./sections/system-section"
 import { LogsSection } from "./sections/logs-section"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Button } from "@/components/ui/button"
 import { Command } from "lucide-react"
+import { useKillSwitch } from "@/hooks/use-api"
+import { useTradingSession } from "@/hooks/use-trading-session"
 
 const SECTION_TITLES: Record<NavSection, string> = {
   dashboard: "Dashboard Overview",
   trading: "Trading Control",
+  history: "Order History",
   risk: "Risk & Strategy",
   system: "System Health",
   logs: "Logs",
@@ -27,6 +31,16 @@ const SECTION_TITLES: Record<NavSection, string> = {
 export function DashboardShell() {
   const [section, setSection] = useState<NavSection>("dashboard")
   const qc = useQueryClient()
+  const { data: killSwitch } = useKillSwitch()
+  const tradingSession = useTradingSession()
+
+  useEffect(() => {
+    if (!killSwitch?.enabled || !tradingSession.isActive) return
+
+    tradingSession.endSession()
+    qc.invalidateQueries({ queryKey: ["orders"] })
+    qc.invalidateQueries({ queryKey: ["fills"] })
+  }, [killSwitch?.enabled, tradingSession.isActive, tradingSession.endSession, qc])
 
   const handleRefreshAll = useCallback(() => {
     qc.invalidateQueries()
@@ -84,6 +98,7 @@ export function DashboardShell() {
             <div className="p-6">
               {section === "dashboard" && <DashboardSection />}
               {section === "trading" && <TradingSection />}
+              {section === "history" && <OrderHistorySection />}
               {section === "risk" && <RiskSection />}
               {section === "system" && <SystemSection />}
               {section === "logs" && <LogsSection />}

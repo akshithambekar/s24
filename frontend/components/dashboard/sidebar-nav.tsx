@@ -4,6 +4,7 @@ import { cn } from "@/lib/utils"
 import {
   LayoutDashboard,
   ArrowLeftRight,
+  History,
   ShieldCheck,
   HeartPulse,
   ScrollText,
@@ -17,6 +18,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 const NAV_ITEMS = [
   { id: "dashboard", label: "Dashboard", icon: LayoutDashboard },
   { id: "trading", label: "Trading", icon: ArrowLeftRight },
+  { id: "history", label: "Order History", icon: History },
   { id: "risk", label: "Risk & Strategy", icon: ShieldCheck },
   { id: "system", label: "System Health", icon: HeartPulse },
   { id: "logs", label: "Logs", icon: ScrollText },

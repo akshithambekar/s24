@@ -2233,6 +2233,28 @@ app.get('/v1/market/ticks/recent', async (req, res) => {
   }
 });
 
+// ==================== Trading Reset ====================
+
+app.post('/v1/trading/reset', async (req, res) => {
+  try {
+    const pool = await getDbPool();
+    // Delete in dependency order (fills -> risk_events -> orders -> signals, positions, portfolio_snapshots)
+    await pool.query('DELETE FROM risk_events');
+    await pool.query('DELETE FROM fills');
+    await pool.query('DELETE FROM orders');
+    await pool.query('DELETE FROM signals');
+    await pool.query('DELETE FROM positions');
+    await pool.query('DELETE FROM portfolio_snapshots');
+    return res.json({
+      reset: true,
+      message: 'All orders, fills, positions, and portfolio snapshots have been cleared.',
+      reset_at: new Date().toISOString()
+    });
+  } catch (err) {
+    return sendApiError(res, 500, 'INTERNAL_ERROR', 'Failed to reset trading data', { reason: err.message });
+  }
+});
+
 // ==================== Start Server ====================
 
 app.listen(PORT, '127.0.0.1', () => {
@@ -2266,6 +2288,7 @@ app.listen(PORT, '127.0.0.1', () => {
   console.log('  GET  /api/deploy/kill-switch');
   console.log('  POST /api/deploy/kill-switch');
   console.log('  GET  /api/portfolio/summary');
+  console.log('  POST /v1/trading/reset');
 
   // Auto-start scheduler if enabled via env var
   if (process.env.SCHEDULER_ENABLED === 'true') {

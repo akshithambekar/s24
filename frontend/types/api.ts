@@ -322,6 +322,13 @@ export interface SmokeRun {
   tx_simulation: string | null
 }
 
+// ─── Trading Reset ───
+export interface TradingResetResponse {
+  reset: boolean
+  message: string
+  reset_at: string
+}
+
 // ─── Logs ───
 export interface LogsResponse {
   logs: string[]

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useOrders } from "@/hooks/use-api"
 import { Panel, EmptyState } from "../panel"
 import { ClipboardList, ChevronLeft, ChevronRight } from "lucide-react"
@@ -10,13 +10,64 @@ import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
 import type { OrderFilters } from "@/types/api"
 
-export function OrdersPanel() {
+type OrdersPanelScope = "current" | "past" | "all"
+
+interface OrdersPanelProps {
+  scope?: OrdersPanelScope
+  sessionStartedAt?: string | null
+  title?: string
+  emptyMessage?: string
+}
+
+function isoOneMillisecondBefore(iso: string | null | undefined) {
+  if (!iso) return null
+  const ts = Date.parse(iso)
+  if (Number.isNaN(ts)) return null
+  return new Date(ts - 1).toISOString()
+}
+
+export function OrdersPanel({
+  scope = "all",
+  sessionStartedAt = null,
+  title,
+  emptyMessage,
+}: OrdersPanelProps) {
   const [filters, setFilters] = useState<OrderFilters>({})
   const [symbolInput, setSymbolInput] = useState("")
   const [statusInput, setStatusInput] = useState("")
-  const { data, isLoading, isError } = useOrders(filters)
+  const hasRequiredSession = scope !== "current" || Boolean(sessionStartedAt)
 
-  const orders = data?.items ?? []
+  const effectiveFilters = useMemo<OrderFilters>(() => {
+    const next: OrderFilters = { ...filters }
+
+    if (scope === "current") {
+      next.from = sessionStartedAt ?? undefined
+      next.to = undefined
+    }
+
+    if (scope === "past") {
+      next.from = undefined
+      next.to = isoOneMillisecondBefore(sessionStartedAt) ?? undefined
+    }
+
+    return next
+  }, [filters, scope, sessionStartedAt])
+
+  const { data, isLoading, isError } = useOrders(effectiveFilters, {
+    enabled: hasRequiredSession,
+  })
+
+  const orders = hasRequiredSession ? (data?.items ?? []) : []
+  const panelTitle = title ?? (scope === "past" ? "Past Orders" : "Orders")
+  const resolvedEmptyMessage = !hasRequiredSession
+    ? emptyMessage ?? "Start a trading session to view current orders."
+    : emptyMessage ?? (scope === "past"
+        ? "No past orders found."
+        : "No orders match the current filters.")
+
+  useEffect(() => {
+    setFilters((prev) => ({ ...prev, cursor: undefined }))
+  }, [scope, sessionStartedAt])
 
   function applyFilters() {
     setFilters({
@@ -39,7 +90,7 @@ export function OrdersPanel() {
 
   return (
     <Panel
-      title="Orders"
+      title={panelTitle}
       icon={<ClipboardList className="h-3.5 w-3.5" />}
       isLoading={isLoading}
       isError={isError}
@@ -69,7 +120,7 @@ export function OrdersPanel() {
       }
     >
       {!orders.length ? (
-        <EmptyState message="No orders match the current filters." />
+        <EmptyState message={resolvedEmptyMessage} />
       ) : (
         <>
           <div className="overflow-x-auto">

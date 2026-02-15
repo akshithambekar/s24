@@ -2,13 +2,15 @@
 
 import { useState } from "react"
 import { useBotStatus, useKillSwitch, useHealth } from "@/hooks/use-api"
+import { useGatewayHealth as useOcHealth } from "@/hooks/use-openclaw"
 import { cn } from "@/lib/utils"
-import { Activity, ShieldAlert, Database, Clock } from "lucide-react"
+import { Activity, ShieldAlert, Database, Bot, Clock } from "lucide-react"
 
 export function StatusStrip() {
   const { data: bot } = useBotStatus()
   const { data: killSwitch } = useKillSwitch()
   const { data: health } = useHealth()
+  const { data: ocHealth } = useOcHealth()
   const [logoError, setLogoError] = useState(false)
 
   return (
@@ -68,6 +70,22 @@ export function StatusStrip() {
             )}
           >
             {killSwitch?.enabled ? "ACTIVE" : "OFF"}
+          </span>
+        </div>
+
+        {/* Agent */}
+        <div className="hidden items-center gap-1.5 sm:flex">
+          <Bot className="h-3 w-3 text-muted-foreground" />
+          <span className="text-muted-foreground">Agent:</span>
+          <span
+            className={cn(
+              "font-semibold uppercase",
+              ocHealth?.ok
+                ? "text-success"
+                : "text-destructive"
+            )}
+          >
+            {ocHealth?.ok ? "OK" : "---"}
           </span>
         </div>
 

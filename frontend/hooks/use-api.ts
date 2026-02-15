@@ -97,19 +97,27 @@ export function usePositions() {
   })
 }
 
-export function useOrders(filters: OrderFilters = {}) {
+export function useOrders(
+  filters: OrderFilters = {},
+  options?: { enabled?: boolean }
+) {
   return useQuery({
     queryKey: qk.orders(filters),
     queryFn: () => api.fetchOrders(filters),
     refetchInterval: 30_000,
+    enabled: options?.enabled ?? true,
   })
 }
 
-export function useFills(filters: FillFilters = {}) {
+export function useFills(
+  filters: FillFilters = {},
+  options?: { enabled?: boolean }
+) {
   return useQuery({
     queryKey: qk.fills(filters),
     queryFn: () => api.fetchFills(filters),
     refetchInterval: 30_000,
+    enabled: options?.enabled ?? true,
   })
 }
 
@@ -165,7 +173,7 @@ export function useDeployStatus() {
 export function useSmokeRuns() {
   return useQuery({
     queryKey: qk.smokeRuns,
-    queryFn: api.fetchSmokeRuns,
+    queryFn: () => api.fetchSmokeRuns(),
     refetchInterval: 60_000,
   })
 }
@@ -250,6 +258,26 @@ export function useTriggerAnomalyCheck() {
     mutationFn: (symbol: string) => api.triggerAnomalyCheck(symbol),
     onSuccess: (_data, symbol) => {
       qc.invalidateQueries({ queryKey: qk.anomaly(symbol) })
+    },
+    onError: onApiError,
+  })
+}
+
+export function useResetTrading() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => api.resetTrading(),
+    onSuccess: (result) => {
+      qc.invalidateQueries({ queryKey: qk.orders({}) })
+      qc.invalidateQueries({ queryKey: qk.fills({}) })
+      qc.invalidateQueries({ queryKey: qk.positions })
+      qc.invalidateQueries({ queryKey: qk.portfolio })
+      qc.invalidateQueries({ queryKey: qk.riskEvents })
+      if (result.reset) {
+        toast.success("Trading data reset")
+      } else {
+        toast.warning(result.message)
+      }
     },
     onError: onApiError,
   })

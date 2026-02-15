@@ -1,6 +1,7 @@
-import { apiFetch } from "./client"
+import { apiFetch, ApiError } from "./client"
 import type {
   BotStatus,
+  TradingResetResponse,
   KillSwitchState,
   KillSwitchTogglePayload,
   KillSwitchToggleResponse,
@@ -159,6 +160,26 @@ export const fetchSmokeRuns = (limit = 20, cursor?: string) => {
   params.set("limit", String(limit))
   if (cursor) params.set("cursor", cursor)
   return apiFetch<CursorPage<SmokeRun>>(`/v1/devnet/smoke-runs?${params.toString()}`)
+}
+
+// ─── Trading Reset ───
+export const resetTrading = async () => {
+  try {
+    return await apiFetch<TradingResetResponse>("/v1/trading/reset", {
+      method: "POST",
+    })
+  } catch (err) {
+    // Backward compatibility: some deployed API versions do not expose reset.
+    if (err instanceof ApiError && err.status === 404) {
+      return {
+        reset: false,
+        message:
+          "Trading reset endpoint is unavailable on this backend version. Continuing without reset.",
+        reset_at: new Date().toISOString(),
+      } satisfies TradingResetResponse
+    }
+    throw err
+  }
 }
 
 // ─── Logs ───

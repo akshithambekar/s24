@@ -13,6 +13,7 @@ import {
   Play,
   ShieldAlert,
   RefreshCw,
+  History,
   LayoutDashboard,
   ArrowLeftRight,
   ShieldCheck,
@@ -81,6 +82,10 @@ export function CommandPalette({
           <CommandItem onSelect={() => run(() => onNavigate("trading"))}>
             <ArrowLeftRight className="mr-2 h-4 w-4" />
             <span>Trading</span>
+          </CommandItem>
+          <CommandItem onSelect={() => run(() => onNavigate("history"))}>
+            <History className="mr-2 h-4 w-4" />
+            <span>Order History</span>
           </CommandItem>
           <CommandItem onSelect={() => run(() => onNavigate("risk"))}>
             <ShieldCheck className="mr-2 h-4 w-4" />

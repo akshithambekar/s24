@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { useFills } from "@/hooks/use-api"
 import { Panel, EmptyState } from "../panel"
 import { Receipt, ChevronLeft, ChevronRight } from "lucide-react"
@@ -9,11 +9,62 @@ import { format } from "date-fns"
 import { Button } from "@/components/ui/button"
 import type { FillFilters } from "@/types/api"
 
-export function FillsPanel() {
-  const [filters, setFilters] = useState<FillFilters>({})
-  const { data, isLoading, isError } = useFills(filters)
+type FillsPanelScope = "current" | "past" | "all"
 
-  const fills = data?.items ?? []
+interface FillsPanelProps {
+  scope?: FillsPanelScope
+  sessionStartedAt?: string | null
+  title?: string
+  emptyMessage?: string
+}
+
+function isoOneMillisecondBefore(iso: string | null | undefined) {
+  if (!iso) return null
+  const ts = Date.parse(iso)
+  if (Number.isNaN(ts)) return null
+  return new Date(ts - 1).toISOString()
+}
+
+export function FillsPanel({
+  scope = "all",
+  sessionStartedAt = null,
+  title,
+  emptyMessage,
+}: FillsPanelProps) {
+  const [filters, setFilters] = useState<FillFilters>({})
+  const hasRequiredSession = scope !== "current" || Boolean(sessionStartedAt)
+
+  const effectiveFilters = useMemo<FillFilters>(() => {
+    const next: FillFilters = { ...filters }
+
+    if (scope === "current") {
+      next.from = sessionStartedAt ?? undefined
+      next.to = undefined
+    }
+
+    if (scope === "past") {
+      next.from = undefined
+      next.to = isoOneMillisecondBefore(sessionStartedAt) ?? undefined
+    }
+
+    return next
+  }, [filters, scope, sessionStartedAt])
+
+  const { data, isLoading, isError } = useFills(effectiveFilters, {
+    enabled: hasRequiredSession,
+  })
+
+  const fills = hasRequiredSession ? (data?.items ?? []) : []
+  const panelTitle = title ?? (scope === "past" ? "Past Fills" : "Fills")
+  const resolvedEmptyMessage = !hasRequiredSession
+    ? emptyMessage ?? "Start a trading session to view current fills."
+    : emptyMessage ?? (scope === "past"
+        ? "No past fills found."
+        : "No fills yet. Fills appear after orders are executed on-chain.")
+
+  useEffect(() => {
+    setFilters((prev) => ({ ...prev, cursor: undefined }))
+  }, [scope, sessionStartedAt])
 
   function nextPage() {
     if (data?.next_cursor) {
@@ -27,13 +78,13 @@ export function FillsPanel() {
 
   return (
     <Panel
-      title="Fills"
+      title={panelTitle}
       icon={<Receipt className="h-3.5 w-3.5" />}
       isLoading={isLoading}
       isError={isError}
     >
       {!fills.length ? (
-        <EmptyState message="No fills yet. Fills appear after orders are executed on-chain." />
+        <EmptyState message={resolvedEmptyMessage} />
       ) : (
         <>
           <div className="overflow-x-auto">

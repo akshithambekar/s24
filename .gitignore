@@ -20,3 +20,4 @@ node_modules/
 
 infra/openclaw-stack-params.json
 infra/solana-autopilot-params.json
+wallet-keypair.json

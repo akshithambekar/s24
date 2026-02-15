@@ -163,6 +163,13 @@ Resources:
           "kill_switch_active": false
         }
 
+  DevnetWalletSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Name: !Sub "${AWS::StackName}/devnet-wallet"
+      Description: "Solana devnet wallet keypair for paper trading agent"
+      SecretString: '{"public_key":"","secret_key":[]}'
+
   # ==================== IAM Policy Extensions ====================
   # Additional policy for the OpenClaw EC2 role to access new resources
   AutopilotAccessPolicy:
@@ -183,6 +190,7 @@ Resources:
               - !Ref DBMasterSecret
               - !Ref SolanaRpcSecret
               - !Ref TradingConfigSecret
+              - !Ref DevnetWalletSecret
           - Sid: CloudWatchMetrics
             Effect: Allow
             Action:

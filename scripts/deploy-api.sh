@@ -24,7 +24,9 @@ cat > /home/ubuntu/autopilot-api/package.json << 'PKGJSON'
     "express": "^4.21.0",
     "pg": "^8.13.0",
     "@aws-sdk/client-secrets-manager": "^3.700.0",
-    "@aws-sdk/client-cloudwatch": "^3.700.0"
+    "@aws-sdk/client-cloudwatch": "^3.700.0",
+    "@solana/web3.js": "^1.98.0",
+    "bs58": "^6.0.0"
   }
 }
 PKGJSON
@@ -93,8 +95,33 @@ const STRATEGY_CONFIG = {
   cooldownSeconds: RISK_POLICY.cooldownSeconds
 };
 
+const DEVNET_WALLET_SECRET_ID = process.env.DEVNET_WALLET_SECRET_ID || 'solana-autopilot-infra/devnet-wallet';
+const DEVNET_RPC_URL = process.env.DEVNET_RPC_URL || 'https://api.devnet.solana.com';
+let devnetExecutor = null;
+
 const smClient = new SecretsManagerClient({ region: REGION });
 const cwClient = new CloudWatchClient({ region: REGION });
+
+async function getDevnetExecutor() {
+  if (devnetExecutor) return devnetExecutor;
+  const { DevnetExecutor } = require('./devnet-executor');
+  const secretResp = await smClient.send(new GetSecretValueCommand({
+    SecretId: DEVNET_WALLET_SECRET_ID
+  }));
+  const walletData = JSON.parse(secretResp.SecretString);
+  devnetExecutor = new DevnetExecutor({
+    rpcUrl: DEVNET_RPC_URL,
+    keypairBytes: walletData.secret_key
+  });
+  return devnetExecutor;
+}
+
+function resolveExecutionMode(tradingConfig) {
+  const mode = tradingConfig?.execution_mode || 'paper';
+  if (mode === 'live') return 'paper';
+  if (mode === 'devnet') return 'devnet';
+  return 'paper';
+}
 
 let dbPool = null;
 
@@ -702,7 +729,7 @@ async function releaseUnstoredIdempotencyKey(pool, requestKey) {
   );
 }
 
-async function logRiskEventWithOrder(pool, { cycleId, symbol, side, confidence, strategyPayload, status, riskReason, action, rule, details, qtySol, limitPrice }) {
+async function logRiskEventWithOrder(pool, { cycleId, symbol, side, confidence, strategyPayload, status, riskReason, action, rule, details, qtySol, limitPrice, executionMode }) {
   const signalInsert = await pool.query(
     `INSERT INTO signals (cycle_id, symbol, side, confidence, strategy_payload)
      VALUES ($1, $2, $3, $4, $5::jsonb)
@@ -712,10 +739,10 @@ async function logRiskEventWithOrder(pool, { cycleId, symbol, side, confidence, 
   const signalId = signalInsert.rows[0].signal_id;
 
   const orderInsert = await pool.query(
-    `INSERT INTO orders (cycle_id, signal_id, symbol, side, qty, limit_price, status, risk_reason)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    `INSERT INTO orders (cycle_id, signal_id, symbol, side, qty, limit_price, status, risk_reason, execution_mode)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
      RETURNING order_id, created_at`,
-    [cycleId, signalId, symbol, side, qtySol, limitPrice, status, riskReason]
+    [cycleId, signalId, symbol, side, qtySol, limitPrice, status, riskReason, executionMode || 'paper']
   );
   const orderId = orderInsert.rows[0].order_id;
 
@@ -808,7 +835,7 @@ app.get('/v1/bot/status', async (req, res) => {
     const drawdown = Math.max(0, riskPolicy.startingBalanceSol - portfolio.navSol);
     const killSwitch = Boolean(tradingConfig.kill_switch_active);
     return res.json({
-      mode: tradingConfig.paper_mode ? 'paper_mode' : 'unknown',
+      mode: resolveExecutionMode(tradingConfig),
       state: killSwitch ? 'paused' : 'running',
       kill_switch: killSwitch,
       last_cycle_at: lastCycleAt ? new Date(lastCycleAt).toISOString() : null,
@@ -878,9 +905,15 @@ app.post('/v1/trade/cycle', async (req, res) => {
     }
 
     const tradingConfig = await getTradingConfig();
+    const executionMode = resolveExecutionMode(tradingConfig);
     const riskPolicy = buildEffectiveRiskPolicy(tradingConfig);
     const strategyConfig = buildEffectiveStrategyConfig(tradingConfig, riskPolicy);
     const anomalyDetectionEnabled = strategyConfig.anomalyDetectionEnabled !== false;
+
+    if (executionMode === 'live') {
+      return rejectCycle(403, 'FORBIDDEN', 'Live trading is not enabled. Use paper or devnet mode.', {});
+    }
+
     if (tradingConfig.kill_switch_active) {
       return rejectCycle(423, 'KILL_SWITCH_ACTIVE', 'Kill switch is active. New cycles are blocked.', {});
     }
@@ -1096,7 +1129,8 @@ app.post('/v1/trade/cycle', async (req, res) => {
           rule: blockedRule.rule,
           details: blockedRule.details,
           qtySol,
-          limitPrice: tickMid
+          limitPrice: tickMid,
+          executionMode
         });
         if (anomalyCheck?.anomaly?.detected) {
           await insertAnomalyWarningForOrder(client, audit.orderId, symbol, anomalyCheck.anomaly);
@@ -1118,8 +1152,27 @@ app.post('/v1/trade/cycle', async (req, res) => {
     }
 
     const fillPrice = side === 'buy' ? Number(latestTick.ask_price) : Number(latestTick.bid_price);
-    const feeSol = qtySol * riskPolicy.simulatedFeePct;
+    let feeSol = qtySol * riskPolicy.simulatedFeePct;
     const slippageBps = Math.round(riskPolicy.simulatedSlippagePct * 10000);
+
+    let txSignature = null;
+    let txSlot = null;
+    let networkFeeSol = null;
+
+    if (executionMode === 'devnet') {
+      try {
+        const executor = await getDevnetExecutor();
+        const result = await executor.executeSwap({ side, qtySol, symbol });
+        txSignature = result.txSignature;
+        txSlot = result.txSlot;
+        networkFeeSol = result.networkFeeSol;
+        feeSol = networkFeeSol;
+      } catch (devnetErr) {
+        return rejectCycle(502, 'DEVNET_TX_FAILED', 'Devnet transaction failed', {
+          reason: devnetErr.message
+        });
+      }
+    }
 
     const client = await pool.connect();
     try {
@@ -1140,17 +1193,18 @@ app.post('/v1/trade/cycle', async (req, res) => {
           price_movement_5m_pct: priceMovementPct5m
         },
         qtySol,
-        limitPrice: tickMid
+        limitPrice: tickMid,
+        executionMode
       });
       if (anomalyCheck?.anomaly?.detected) {
         await insertAnomalyWarningForOrder(client, audit.orderId, symbol, anomalyCheck.anomaly);
       }
 
       const fillInsert = await client.query(
-        `INSERT INTO fills (order_id, symbol, side, qty, fill_price, fee, slippage_bps, filled_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+        `INSERT INTO fills (order_id, symbol, side, qty, fill_price, fee, slippage_bps, filled_at, execution_mode, tx_signature, tx_slot, network_fee_sol)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), $8, $9, $10, $11)
          RETURNING fill_id, filled_at`,
-        [audit.orderId, symbol, side, qtySol, fillPrice, feeSol, slippageBps]
+        [audit.orderId, symbol, side, qtySol, fillPrice, feeSol, slippageBps, executionMode, txSignature, txSlot, networkFeeSol]
       );
 
       await client.query(
@@ -1217,6 +1271,10 @@ app.post('/v1/trade/cycle', async (req, res) => {
         order_id: audit.orderId,
         fill_id: fillInsert.rows[0].fill_id,
         status: 'executed',
+        execution_mode: executionMode,
+        tx_signature: txSignature,
+        tx_slot: txSlot,
+        network_fee_sol: networkFeeSol,
         anomaly: anomalyCheck?.anomaly || null
       };
 
@@ -1273,7 +1331,7 @@ app.get('/v1/orders', async (req, res) => {
 
     params.push(limit + 1);
     const query = `
-      SELECT order_id, cycle_id, signal_id, symbol, side, qty, limit_price, status, risk_reason, created_at
+      SELECT order_id, cycle_id, signal_id, symbol, side, qty, limit_price, status, risk_reason, execution_mode, created_at
       FROM orders
       WHERE ${where.join(' AND ')}
       ORDER BY created_at DESC, order_id DESC
@@ -1301,6 +1359,10 @@ app.get('/v1/fills', async (req, res) => {
       params.push(req.query.symbol);
       where.push(`symbol = $${params.length}`);
     }
+    if (req.query.execution_mode) {
+      params.push(req.query.execution_mode);
+      where.push(`execution_mode = $${params.length}`);
+    }
     if (req.query.from) {
       params.push(req.query.from);
       where.push(`filled_at >= $${params.length}::timestamptz`);
@@ -1316,7 +1378,7 @@ app.get('/v1/fills', async (req, res) => {
 
     params.push(limit + 1);
     const query = `
-      SELECT fill_id, order_id, symbol, side, qty, fill_price, fee, slippage_bps, filled_at
+      SELECT fill_id, order_id, symbol, side, qty, fill_price, fee, slippage_bps, filled_at, execution_mode, tx_signature, tx_slot, network_fee_sol
       FROM fills
       WHERE ${where.join(' AND ')}
       ORDER BY filled_at DESC, fill_id DESC
@@ -1671,6 +1733,59 @@ app.get('/v1/kill-switch', async (req, res) => {
     });
   } catch (err) {
     return sendApiError(res, 500, 'INTERNAL_ERROR', 'Failed to fetch kill switch state', { reason: err.message });
+  }
+});
+
+app.get('/v1/devnet/wallet', async (req, res) => {
+  try {
+    const tradingConfig = await getTradingConfig();
+    const executionMode = resolveExecutionMode(tradingConfig);
+
+    if (executionMode !== 'devnet') {
+      return res.json({
+        enabled: false,
+        execution_mode: executionMode,
+        message: 'Devnet execution is not active. Switch to devnet mode via PUT /v1/execution-mode.'
+      });
+    }
+
+    const executor = await getDevnetExecutor();
+    const health = await executor.healthCheck();
+    return res.json({
+      enabled: true,
+      execution_mode: executionMode,
+      wallet_public_key: health.walletPublicKey,
+      balance_sol: health.balanceSol,
+      healthy: health.healthy,
+      slot: health.slot,
+      error: health.error || null
+    });
+  } catch (err) {
+    return sendApiError(res, 500, 'INTERNAL_ERROR', 'Failed to get devnet wallet info', { reason: err.message });
+  }
+});
+
+app.put('/v1/execution-mode', async (req, res) => {
+  const mode = req.body?.mode;
+  if (!mode || !['paper', 'devnet'].includes(mode)) {
+    return sendApiError(res, 400, 'BAD_REQUEST', 'mode must be "paper" or "devnet"', {});
+  }
+
+  if (mode === 'live') {
+    return sendApiError(res, 403, 'FORBIDDEN', 'Live trading is not enabled', {});
+  }
+
+  try {
+    const tradingConfig = await getTradingConfig();
+    tradingConfig.execution_mode = mode;
+    await setTradingConfig(tradingConfig);
+
+    return res.json({
+      execution_mode: mode,
+      updated_at: nowIso()
+    });
+  } catch (err) {
+    return sendApiError(res, 500, 'INTERNAL_ERROR', 'Failed to update execution mode', { reason: err.message });
   }
 });
 
@@ -2140,6 +2255,8 @@ app.listen(PORT, '127.0.0.1', () => {
   console.log('  GET  /v1/kill-switch');
   console.log('  POST /v1/kill-switch');
   console.log('  GET  /v1/market/ticks/recent?symbol=SOL-USDC&minutes=5');
+  console.log('  GET  /v1/devnet/wallet');
+  console.log('  PUT  /v1/execution-mode');
   console.log('  GET  /v1/devnet/smoke-runs');
   console.log('  GET  /v1/scheduler/status');
   console.log('  POST /v1/scheduler/control');
@@ -2157,6 +2274,85 @@ app.listen(PORT, '127.0.0.1', () => {
   }
 });
 SERVERJS
+
+# Write the devnet executor module
+cat > /home/ubuntu/autopilot-api/devnet-executor.js << 'DEVNETJS'
+const {
+  Connection,
+  Keypair,
+  Transaction,
+  SystemProgram,
+  sendAndConfirmTransaction,
+  LAMPORTS_PER_SOL
+} = require('@solana/web3.js');
+const bs58 = require('bs58');
+
+class DevnetExecutor {
+  constructor({ rpcUrl, keypairBytes }) {
+    this.connection = new Connection(rpcUrl, 'confirmed');
+    this.keypair = Keypair.fromSecretKey(Uint8Array.from(keypairBytes));
+  }
+
+  async getBalance() {
+    const lamports = await this.connection.getBalance(this.keypair.publicKey);
+    return lamports / LAMPORTS_PER_SOL;
+  }
+
+  async executeSwap({ side, qtySol, symbol }) {
+    const lamports = Math.round(qtySol * LAMPORTS_PER_SOL);
+
+    const transaction = new Transaction().add(
+      SystemProgram.transfer({
+        fromPubkey: this.keypair.publicKey,
+        toPubkey: this.keypair.publicKey,
+        lamports
+      })
+    );
+
+    const txSignature = await sendAndConfirmTransaction(
+      this.connection,
+      transaction,
+      [this.keypair],
+      { commitment: 'confirmed' }
+    );
+
+    const txDetails = await this.connection.getTransaction(txSignature, {
+      commitment: 'confirmed',
+      maxSupportedTransactionVersion: 0
+    });
+
+    const txSlot = txDetails?.slot || null;
+    const networkFeeSol = txDetails?.meta?.fee
+      ? txDetails.meta.fee / LAMPORTS_PER_SOL
+      : 0.000005;
+
+    return { txSignature, txSlot, networkFeeSol };
+  }
+
+  async healthCheck() {
+    try {
+      const [slot, balanceSol] = await Promise.all([
+        this.connection.getSlot(),
+        this.getBalance()
+      ]);
+      return {
+        healthy: true,
+        slot,
+        balanceSol,
+        walletPublicKey: this.keypair.publicKey.toBase58()
+      };
+    } catch (err) {
+      return {
+        healthy: false,
+        error: err.message,
+        walletPublicKey: this.keypair.publicKey.toBase58()
+      };
+    }
+  }
+}
+
+module.exports = { DevnetExecutor };
+DEVNETJS
 
 # Install dependencies
 cd /home/ubuntu/autopilot-api

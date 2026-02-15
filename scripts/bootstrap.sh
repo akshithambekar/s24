@@ -210,6 +210,7 @@ else
   cat > "$CONFIG_DIR/trading-config.json" << 'TCEOF'
 {
   "paper_mode": true,
+  "execution_mode": "paper",
   "max_position_size_usd": 1000,
   "max_daily_loss_usd": 100,
   "cooldown_seconds": 60,

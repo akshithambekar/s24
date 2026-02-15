@@ -1,4 +1,5 @@
 # s24: Solana Autopilot (OpenClaw + AWS + RDS + Dashboard)
+## Developed: Akshith, Abhi, Tuga, Yahya
 
 This repository implements a **Solana paper-trading control plane** around OpenClaw:
 

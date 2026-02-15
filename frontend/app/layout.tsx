@@ -1,14 +1,13 @@
 import type { Metadata, Viewport } from "next";
-import { IBM_Plex_Mono } from "next/font/google";
+import { Geist_Mono } from "next/font/google";
 import { ThemeProvider } from "@/components/theme-provider";
 import { QueryProvider } from "@/components/query-provider";
 import { Toaster } from "@/components/ui/sonner";
 import "./globals.css";
 
-const ibmPlexMono = IBM_Plex_Mono({
+const geistMono = Geist_Mono({
     subsets: ["latin"],
-    weight: ["400", "500", "600", "700"],
-    variable: "--font-ibm-plex-mono",
+    variable: "--font-geist-mono",
 });
 
 export const metadata: Metadata = {
@@ -31,7 +30,7 @@ export default function RootLayout({
     return (
         <html lang="en" className="dark" suppressHydrationWarning>
             <body
-                className={`${ibmPlexMono.variable} font-mono antialiased scanline-overlay noise-overlay`}
+                className={`${geistMono.variable} font-mono antialiased scanline-overlay noise-overlay`}
             >
                 <ThemeProvider
                     attribute="class"

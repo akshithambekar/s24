@@ -118,7 +118,7 @@ function writePersistedSession(session: PersistedTradingSession) {
 
 export function useTradingSession() {
   const [state, setState] = useState<TradingSessionState>(() =>
-    stateFromPersisted(readPersistedSession())
+    stateFromPersisted(EMPTY_PERSISTED)
   )
 
   const syncFromStorage = useCallback(() => {
@@ -159,6 +159,7 @@ export function useTradingSession() {
 
     window.addEventListener("storage", onStorage)
     window.addEventListener(EVENT_NAME, onLocalSync)
+    syncFromStorage()
 
     return () => {
       window.removeEventListener("storage", onStorage)

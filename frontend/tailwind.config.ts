@@ -11,8 +11,8 @@ const config: Config = {
   theme: {
     extend: {
       fontFamily: {
-        sans: ['var(--font-ibm-plex-mono)'],
-        mono: ['var(--font-ibm-plex-mono)'],
+        sans: ['var(--font-geist-mono)'],
+        mono: ['var(--font-geist-mono)'],
       },
       colors: {
         background: 'hsl(var(--background))',

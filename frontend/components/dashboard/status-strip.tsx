@@ -16,10 +16,14 @@ export function StatusStrip({ title, actions }: StatusStripProps) {
   const { data: killSwitch } = useKillSwitch()
   const { data: health } = useHealth()
   const { data: ocHealth } = useOcHealth()
-  const [now, setNow] = useState(new Date())
+  const [clockText, setClockText] = useState("--:--:--")
 
   useEffect(() => {
-    const id = setInterval(() => setNow(new Date()), 1000)
+    const updateClock = () => {
+      setClockText(new Date().toLocaleTimeString())
+    }
+    updateClock()
+    const id = setInterval(updateClock, 1000)
     return () => clearInterval(id)
   }, [])
 
@@ -106,7 +110,7 @@ export function StatusStrip({ title, actions }: StatusStripProps) {
         <div className="hidden items-center gap-1.5 md:flex">
           <Clock className="h-3 w-3 text-muted-foreground" />
           <span className="text-muted-foreground">
-            {now.toLocaleTimeString()}
+            {clockText}
           </span>
         </div>
       </div>

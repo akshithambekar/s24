@@ -29,18 +29,18 @@ export function Panel({
   return (
     <div
       className={cn(
-        "rounded-md border border-border bg-card/50 backdrop-blur-sm",
+        "flex h-full min-h-[180px] flex-col rounded-md border border-border bg-card/50 backdrop-blur-sm",
         className
       )}
     >
-      <div className="flex items-center justify-between border-b border-border px-4 py-2.5">
+      <div className="flex min-h-[44px] shrink-0 items-center justify-between border-b border-border px-4 py-2">
         <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
           {icon}
           <span>{title}</span>
         </div>
         {actions && <div className="flex items-center gap-2">{actions}</div>}
       </div>
-      <div className="p-4">
+      <div className="flex-1 p-4">
         {isLoading ? (
           <div className="flex flex-col gap-3">
             <Skeleton className="h-4 w-3/4" />
@@ -48,9 +48,11 @@ export function Panel({
             <Skeleton className="h-4 w-2/3" />
           </div>
         ) : isError ? (
-          <div className="flex items-center gap-2 text-destructive text-sm">
-            <AlertCircle className="h-4 w-4 flex-shrink-0" />
-            <span>{errorMessage ?? "Failed to fetch data"}</span>
+          <div className="flex flex-col items-center justify-center py-8 text-center">
+            <div className="flex items-center gap-2 text-destructive text-sm">
+              <AlertCircle className="h-4 w-4 flex-shrink-0" />
+              <span>{errorMessage ?? "Failed to fetch data"}</span>
+            </div>
           </div>
         ) : (
           children

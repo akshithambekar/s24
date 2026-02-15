@@ -91,13 +91,13 @@ export function FillsPanel({
             <table className="w-full text-xs">
               <thead>
                 <tr className="border-b border-border text-left text-muted-foreground">
-                  <th className="pb-2 pr-3 font-semibold">Time</th>
-                  <th className="pb-2 pr-3 font-semibold">Symbol</th>
-                  <th className="pb-2 pr-3 font-semibold">Side</th>
-                  <th className="pb-2 pr-3 font-semibold text-right">Qty</th>
-                  <th className="pb-2 pr-3 font-semibold text-right">Price</th>
-                  <th className="pb-2 pr-3 font-semibold text-right">Fee</th>
-                  <th className="pb-2 font-semibold text-right">Slip (bps)</th>
+                  <th className="py-2 pr-3 font-semibold">Time</th>
+                  <th className="py-2 pr-3 font-semibold">Symbol</th>
+                  <th className="py-2 pr-3 font-semibold">Side</th>
+                  <th className="py-2 pr-3 font-semibold text-right">Qty</th>
+                  <th className="py-2 pr-3 font-semibold text-right">Price</th>
+                  <th className="py-2 pr-3 font-semibold text-right">Fee</th>
+                  <th className="py-2 font-semibold text-right">Slip (bps)</th>
                 </tr>
               </thead>
               <tbody>
@@ -146,28 +146,30 @@ export function FillsPanel({
               </tbody>
             </table>
           </div>
-          <div className="mt-3 flex items-center justify-end gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={prevPage}
-              disabled={!filters.cursor}
-              className="h-6 text-xs"
-            >
-              <ChevronLeft className="mr-1 h-3 w-3" />
-              Prev
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={nextPage}
-              disabled={!data?.next_cursor}
-              className="h-6 text-xs"
-            >
-              Next
-              <ChevronRight className="ml-1 h-3 w-3" />
-            </Button>
-          </div>
+          {(filters.cursor || data?.next_cursor) && (
+            <div className="mt-3 flex items-center justify-end gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={prevPage}
+                disabled={!filters.cursor}
+                className="h-6 text-xs"
+              >
+                <ChevronLeft className="mr-1 h-3 w-3" />
+                Prev
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={nextPage}
+                disabled={!data?.next_cursor}
+                className="h-6 text-xs"
+              >
+                Next
+                <ChevronRight className="ml-1 h-3 w-3" />
+              </Button>
+            </div>
+          )}
         </>
       )}
     </Panel>

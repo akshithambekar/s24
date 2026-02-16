@@ -1,5 +1,7 @@
 ## s24
 
+>🏆 &nbsp;Best Use of Solana @ Hackfax x PatriotHacks 2026. View the Devpost [here](https://devpost.com/software/s24).
+
 **s24** is a 24/7 Solana trading agent that combines autonomous trade orchestration, risk-aware execution, market data ingestion, and an operational dashboard. It is designed as a control plane for continuous paper trading with optional devnet execution.
 
 At runtime:
@@ -11,8 +13,6 @@ At runtime:
 5. The dashboard reflects portfolio state, positions, and risk in real time.
 6. A kill switch can halt trading instantly.
 7. All activity is observable through structured endpoints and UI panels.
-
-> 🏆 Best Use of Solana @ Hackfax x PatriotHacks 2026. View the Devpost [here](https://devpost.com/software/s24).
 
 ---
 

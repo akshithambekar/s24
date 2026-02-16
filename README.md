@@ -12,7 +12,7 @@ At runtime:
 6. A kill switch can halt trading instantly.
 7. All activity is observable through structured endpoints and UI panels.
 
-> Built in 36 hours at Hackfax x PatriotHacks 2026. View the Devpost [here](https://devpost.com/software/s24).
+> 🏆 Best Use of Solana @ Hackfax x PatriotHacks 2026. View the Devpost [here](https://devpost.com/software/s24).
 
 ---
 
